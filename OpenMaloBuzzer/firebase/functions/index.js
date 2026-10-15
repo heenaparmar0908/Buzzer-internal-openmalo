@@ -170,23 +170,22 @@ exports.onVoiceMessageCreated = functions.firestore
     try {
       await admin.messaging().send({
         token,
+        notification: {
+          title: `Voice message from ${senderName}`,
+          body: `${duration}s voice message`,
+        },
         data: {
           type: 'voice_message',
           from_user_id: mail.from_user_id,
           from_user_name: senderName,
           duration: String(duration),
         },
-        notification: {
-          title: `Voice message from ${senderName}`,
-          body: `${duration}s voice message`,
-        },
         android: {
           priority: 'high',
           ttl: 0,
           notification: {
-            channelId: 'openmalo_buzz',
+            channelId: 'openmalo_voicemail',
             sound: 'default',
-            priority: 'high',
           },
         },
         apns: {
@@ -198,7 +197,8 @@ exports.onVoiceMessageCreated = functions.firestore
                 body: `${duration}s voice message`,
               },
               sound: 'default',
-              badge: 1,
+              'content-available': 1,
+              'mutable-content': 1,
             },
           },
         },

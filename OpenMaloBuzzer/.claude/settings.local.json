@@ -29,7 +29,14 @@
       "Bash(grep -rn \"📞\\\\|🎙\\\\|✉\\\\|👥\\\\|📋\\\\|⚙️\\\\|✕\\\\|✓\\\\|✗\\\\|⏱\\\\|👀\\\\|⏳\\\\|📳\\\\|🗑️\\\\|👋\\\\|📭\\\\|▶\\\\|⏸\\\\|⏹\" /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/src/screens/*.tsx)",
       "Bash(curl:*)",
       "Bash(afinfo:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(find /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer -type f -name *.env* -o -name *firebase*config* -o -name *google-services*)",
+      "Bash(grep -r \"http\\\\|url\\\\|host\\\\|endpoint\" /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/src --include=*.ts --include=*.tsx --include=*.js)",
+      "Bash(node -e \":*)",
+      "Bash(firebase functions:list)",
+      "Bash(firebase firestore:query users --project buzzer-5936f --filter 'phone == \"\"8140077953\"\"')",
+      "Bash(lsof -ti:8081)",
+      "Bash(xargs kill:*)"
     ]
   }
 }

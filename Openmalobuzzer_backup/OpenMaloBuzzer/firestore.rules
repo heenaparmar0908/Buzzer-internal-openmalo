@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------
+    // TODO: Migrate to Firebase Auth for proper security.
+    // Without Firebase Auth, request.auth is null and auth-based
+    // rules cannot be enforced. The rules below add basic data
+    // validation and structure enforcement as a starting point.
+    // Once Firebase Auth is integrated, replace `true` conditions
+    // with `request.auth != null` and ownership checks.
+    // ---------------------------------------------------------------
+
+    // Users — profile info visible to all authenticated users
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys()
+        .hasAll(['name', 'phone', 'pin_hash', 'role', 'last_seen_at', 'is_active'])
+        && request.resource.data.role in ['owner', 'manager', 'member']
+        && request.resource.data.is_active == true;
+      allow update: if true;
+      // TODO: restrict to request.auth.uid == userId || caller is owner
+      allow delete: if false; // soft-delete only (is_active = false)
+    }
+
+    // FCM tokens — stored separately so other users cannot read them
+    match /user_tokens/{userId} {
+      // TODO: restrict to request.auth.uid == userId
+      allow read, write: if true;
+    }
+
+    // Buzzes — core messaging documents
+    match /buzzes/{buzzId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys()
+        .hasAll(['from_user_id', 'to_user_id', 'reason', 'created_at', 'response'])
+        && request.resource.data.response == 'none';
+      allow update: if true;
+      // TODO: only sender can cancel, only receiver can respond
+      allow delete: if false;
+    }
+
+    // Reasons — buzz reason labels
+    match /reasons/{reasonId} {
+      allow read: if true;
+      // TODO: restrict writes to owner role
+      allow create, update: if true;
+      allow delete: if false;
+    }
+
+    // Groups
+    match /groups/{groupId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys()
+        .hasAll(['name', 'member_ids', 'created_by', 'created_at', 'is_active'])
+        && request.resource.data.member_ids.size() >= 2
+        && request.resource.data.is_active == true;
+      allow update: if true;
+      // TODO: restrict to group creator
+      allow delete: if false;
+    }
+
+    // Call Logs
+    match /call_logs/{logId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys()
+        .hasAll(['caller_id', 'receiver_id', 'started_at', 'duration_seconds']);
+      allow update, delete: if false;
+    }
+
+    // Voice Mails
+    match /voice_mails/{mailId} {
+      allow read: if true;
+      // TODO: restrict to sender and receiver
+      allow create: if request.resource.data.keys()
+        .hasAll(['from_user_id', 'to_user_id', 'audio_url', 'duration_seconds', 'created_at', 'listened']);
+      allow update: if true;
+      // TODO: restrict to receiver (for marking listened)
+      allow delete: if false;
+    }
+
+    // Settings
+    match /settings/{settingId} {
+      allow read: if true;
+      // TODO: restrict writes to owner role
+      allow write: if true;
+    }
+  }
+}

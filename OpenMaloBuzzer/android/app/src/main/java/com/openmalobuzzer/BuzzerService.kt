@@ -35,6 +35,8 @@ class BuzzerService : Service() {
         const val EXTRA_USER_ID = "user_id"
         const val EXTRA_BUZZ_ID = "buzz_id"
         const val EXTRA_RESPONSE = "response"
+        const val BUZZ_CHANNEL_ID = "openmalo_buzz"
+        const val VOICEMAIL_CHANNEL_ID = "openmalo_voicemail"
         const val PREFS_NAME = "buzzer_prefs"
         const val PREF_USER_ID = "active_user_id"
         const val POLL_INTERVAL_MS = 15000L
@@ -42,6 +44,8 @@ class BuzzerService : Service() {
 
     private var buzzListener: ListenerRegistration? = null
     private var responseListener: ListenerRegistration? = null
+    private var voiceMailListener: ListenerRegistration? = null
+    private val seenVoiceMailIds = mutableSetOf<String>()
     private var wakeLock: PowerManager.WakeLock? = null
     private var mediaPlayer: MediaPlayer? = null
     private var vibrator: Vibrator? = null
@@ -65,6 +69,7 @@ class BuzzerService : Service() {
     override fun onCreate() {
         super.onCreate()
         createServiceChannel()
+        createVoiceMailChannel()
         acquireWakeLock()
         vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -93,14 +98,8 @@ class BuzzerService : Service() {
 
         if (action == ACTION_STOP_ALARM) {
             stopAlarm()
-            // Mark buzz as dismissed in Firestore so sender knows
-            activeBuzzId?.let { buzzId ->
-                Log.d(TAG, "Buzz dismissed: $buzzId")
-                val db = FirebaseFirestore.getInstance()
-                db.collection("buzzes").document(buzzId)
-                    .update(mapOf("response" to "dismissed", "responded_at" to System.currentTimeMillis()))
-            }
             cancelActiveBuzzNotification()
+            activeBuzzId = null
             return START_STICKY
         }
 
@@ -132,11 +131,15 @@ class BuzzerService : Service() {
             saveUserId(userId)
         }
 
-        Log.d(TAG, "Starting/resuming service for userId: $userId (action: $action)")
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
-        startListening(userId)
-        startPolling()
+
+        // Only re-attach listeners if not already listening for this user
+        if (currentUserId != userId || buzzListener == null) {
+            Log.d(TAG, "Starting listeners for userId: $userId")
+            startListening(userId)
+            startPolling()
+        }
         scheduleRestartAlarm()
 
         return START_STICKY
@@ -276,6 +279,37 @@ class BuzzerService : Service() {
                     }
                 }
             }
+
+        // Listen for incoming voice mails
+        Log.d(TAG, "Setting up voice mail listener for userId: $userId")
+        voiceMailListener = db.collection("voice_mails")
+            .whereEqualTo("to_user_id", userId)
+            .addSnapshotListener { snapshots, error ->
+                if (error != null) {
+                    Log.e(TAG, "Voice mail listener error: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshots == null) return@addSnapshotListener
+                Log.d(TAG, "Voice mail snapshot: ${snapshots.documents.size} docs, ${snapshots.documentChanges.size} changes")
+                for (change in snapshots.documentChanges) {
+                    if (change.type == com.google.firebase.firestore.DocumentChange.Type.ADDED) {
+                        val mailId = change.document.id
+                        val data = change.document.data
+                        val createdAt = data["created_at"] as? Long ?: 0L
+                        val listened = data["listened"] as? Boolean ?: false
+                        val deleted = data["deleted"] as? Boolean ?: false
+                        val age = System.currentTimeMillis() - createdAt
+                        Log.d(TAG, "Voice mail ADDED: $mailId, age=${age}ms, listened=$listened, deleted=$deleted, seen=${seenVoiceMailIds.contains(mailId)}")
+                        if (!listened && !deleted && age < 120000 && !seenVoiceMailIds.contains(mailId)) {
+                            seenVoiceMailIds.add(mailId)
+                            val fromUserId = data["from_user_id"] as? String ?: ""
+                            val duration = data["duration_seconds"] as? Long ?: 0L
+                            showVoiceMailNotification(mailId, fromUserId, duration)
+                        }
+                    }
+                }
+                if (seenVoiceMailIds.size > 50) seenVoiceMailIds.clear()
+            }
     }
 
     private fun pollForBuzzes(userId: String) {
@@ -329,8 +363,8 @@ class BuzzerService : Service() {
                     this, (buzzId + "_cancel").hashCode(), launchIntent,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
-                val notification = NotificationCompat.Builder(this, "openmalo_buzz")
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                val notification = NotificationCompat.Builder(this, BUZZ_CHANNEL_ID)
+                    .setSmallIcon(R.mipmap.ic_launcher)
                     .setContentTitle("Buzz cancelled")
                     .setContentText("$senderName cancelled the buzz")
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -402,6 +436,8 @@ class BuzzerService : Service() {
         buzzListener = null
         responseListener?.remove()
         responseListener = null
+        voiceMailListener?.remove()
+        voiceMailListener = null
         currentUserId = null
     }
 
@@ -437,18 +473,10 @@ class BuzzerService : Service() {
                     )
                 }
 
-                val dismissIntent = Intent(this, BuzzerService::class.java).apply {
-                    action = ACTION_STOP_ALARM
-                }
-                val dismissPendingIntent = PendingIntent.getService(
-                    this, buzzId.hashCode() + 4, dismissIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-
                 createBuzzChannel()
 
-                val notification = NotificationCompat.Builder(this, "openmalo_buzz")
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                val notification = NotificationCompat.Builder(this, BUZZ_CHANNEL_ID)
+                    .setSmallIcon(R.mipmap.ic_launcher)
                     .setContentTitle("Buzz from $senderName")
                     .setContentText(body)
                     .setStyle(NotificationCompat.BigTextStyle().bigText("$body\n\nTap to open or use actions below"))
@@ -468,6 +496,39 @@ class BuzzerService : Service() {
             }
     }
 
+    private fun showVoiceMailNotification(mailId: String, fromUserId: String, duration: Long) {
+        val db = FirebaseFirestore.getInstance()
+        db.collection("users").document(fromUserId).get()
+            .addOnSuccessListener { doc ->
+                val senderName = doc.getString("name") ?: "Someone"
+                Log.d(TAG, "Showing voice mail notification from $senderName")
+
+                val launchIntent = Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra("navigate_to", "voice_mail")
+                }
+                val pendingIntent = PendingIntent.getActivity(
+                    this, mailId.hashCode(), launchIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val notification = NotificationCompat.Builder(this, VOICEMAIL_CHANNEL_ID)
+                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setContentTitle("Voice message from $senderName")
+                    .setContentText("${duration}s voice message")
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setAutoCancel(true)
+                    .setContentIntent(pendingIntent)
+                    .build()
+
+                val nm = getSystemService(NotificationManager::class.java)
+                nm.notify(mailId.hashCode(), notification)
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Failed to get sender for voice mail: ${e.message}")
+            }
+    }
+
     private fun buildNotification(): Notification {
         val launchIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
@@ -475,7 +536,7 @@ class BuzzerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Buzzer")
             .setContentText("Listening for incoming buzzes")
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -495,10 +556,23 @@ class BuzzerService : Service() {
         }
     }
 
+    private fun createVoiceMailChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                VOICEMAIL_CHANNEL_ID, "Voice Messages",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Voice message notifications"
+            }
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(channel)
+        }
+    }
+
     private fun createBuzzChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                "openmalo_buzz", "Buzzer Alerts",
+                BUZZ_CHANNEL_ID, "Buzzer Alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Incoming buzz alerts"

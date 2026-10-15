@@ -190,6 +190,53 @@ export const subscribeToIncomingBuzzes = (
   );
 };
 
+export const subscribeToNewVoiceMails = (
+  userId: string,
+  callback: (mail: VoiceMail) => void,
+) => {
+  let isFirstSnapshot = true;
+  return onSnapshot(
+    query(
+      collection(db, COLLECTIONS.VOICE_MAILS),
+      where('to_user_id', '==', userId),
+      orderBy('created_at', 'desc'),
+    ),
+    snap => {
+      if (!snap) return;
+      if (isFirstSnapshot) {
+        isFirstSnapshot = false;
+        return;
+      }
+      snap.docChanges().forEach(change => {
+        if (change.type === 'added') {
+          const mail = {id: change.doc.id, ...change.doc.data()} as VoiceMail;
+          if (!mail.listened && Date.now() - mail.created_at < 120000) {
+            callback(mail);
+          }
+        }
+      });
+    },
+    err => console.warn('subscribeToNewVoiceMails error:', err),
+  );
+};
+
+export const subscribeToMissedBuzzes = (
+  userId: string,
+  callback: (buzzes: Buzz[]) => void,
+) =>
+  onSnapshot(
+    query(
+      collection(db, COLLECTIONS.BUZZES),
+      where('to_user_id', '==', userId),
+      where('response', '==', 'none'),
+    ),
+    snap => {
+      if (!snap) return;
+      callback(snap.docs.map(d => ({id: d.id, ...d.data()} as Buzz)));
+    },
+    err => console.warn('subscribeToMissedBuzzes error:', err),
+  );
+
 // ─── Groups ─────────────────────────────────────────────
 export const subscribeToGroups = (callback: (groups: Group[]) => void) =>
   onSnapshot(
@@ -262,7 +309,11 @@ export const subscribeToVoiceMails = (
     ),
     snap => {
       if (!snap) return;
-      callback(snap.docs.map(d => ({id: d.id, ...d.data()} as VoiceMail)));
+      callback(
+        snap.docs
+          .map(d => ({id: d.id, ...d.data()} as VoiceMail))
+          .filter(m => !m.deleted),
+      );
     },
     err => console.warn('subscribeToVoiceMails error:', err),
   );

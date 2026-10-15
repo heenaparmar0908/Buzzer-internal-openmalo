@@ -2,10 +2,11 @@ import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import {Buzz} from '../types';
+import {Buzz, User} from '../types';
 import {getBuzzLogPage, getUsers} from '../services/firebase';
 
 interface Props {
+  currentUser: User;
   onBack: () => void;
 }
 
@@ -18,12 +19,13 @@ const RESPONSE_MAP: Record<string, {label: string; color: string; icon: string}>
   none: {label: 'No response', color: '#555', icon: '—'},
 };
 
-const HistoryScreen: React.FC<Props> = ({onBack}) => {
+const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
   const insets = useSafeAreaInsets();
   const [buzzes, setBuzzes] = useState<Buzz[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [filter, setFilter] = useState<string>('all');
   const [hasMore, setHasMore] = useState(true);
   const lastDocRef = useRef<any>(null);
 
@@ -34,7 +36,10 @@ const HistoryScreen: React.FC<Props> = ({onBack}) => {
           getBuzzLogPage(),
           getUsers(),
         ]);
-        setBuzzes(page.buzzes);
+        const filtered = currentUser.role === 'member'
+          ? page.buzzes.filter(b => b.from_user_id === currentUser.id || b.to_user_id === currentUser.id)
+          : page.buzzes;
+        setBuzzes(filtered);
         lastDocRef.current = page.lastDoc;
         setHasMore(page.hasMore);
         const map: Record<string, string> = {};
@@ -53,7 +58,10 @@ const HistoryScreen: React.FC<Props> = ({onBack}) => {
     setLoadingMore(true);
     try {
       const page = await getBuzzLogPage(lastDocRef.current);
-      setBuzzes(prev => [...prev, ...page.buzzes]);
+      const filtered = currentUser.role === 'member'
+        ? page.buzzes.filter(b => b.from_user_id === currentUser.id || b.to_user_id === currentUser.id)
+        : page.buzzes;
+      setBuzzes(prev => [...prev, ...filtered]);
       lastDocRef.current = page.lastDoc;
       setHasMore(page.hasMore);
     } catch (err) {
@@ -83,8 +91,8 @@ const HistoryScreen: React.FC<Props> = ({onBack}) => {
 
   const renderItem = ({item}: {item: Buzz}) => {
     const resp = RESPONSE_MAP[item.response] || RESPONSE_MAP.none;
-    const fromName = usersMap[item.from_user_id] || '?';
-    const toName = usersMap[item.to_user_id] || '?';
+    const fromName = item.from_user_id === currentUser.id ? 'You' : (usersMap[item.from_user_id] || '?');
+    const toName = item.to_user_id === currentUser.id ? 'You' : (usersMap[item.to_user_id] || '?');
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -139,32 +147,27 @@ const HistoryScreen: React.FC<Props> = ({onBack}) => {
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
           <Text style={styles.backBtn}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Buzz Log</Text>
+        <Text style={styles.headerTitle}>{currentUser.role === 'member' ? 'My Buzzes' : 'Buzz Log'}</Text>
         <View style={styles.periodBadge}>
           <Text style={styles.periodText}>30 days</Text>
         </View>
       </View>
-      <View style={styles.stats}>
-        <View style={styles.statItem}>
-          <Text style={styles.statNumber}>{buzzes.length}</Text>
-          <Text style={styles.statLabel}>Loaded</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={[styles.statNumber, {color: '#4CAF50'}]}>{buzzes.filter(b => b.response === 'ack').length}</Text>
-          <Text style={styles.statLabel}>Ack</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={[styles.statNumber, {color: '#FF9800'}]}>{buzzes.filter(b => b.response === 'five_min').length}</Text>
-          <Text style={styles.statLabel}>5 min</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={[styles.statNumber, {color: '#F44336'}]}>{buzzes.filter(b => b.response === 'busy').length}</Text>
-          <Text style={styles.statLabel}>Busy</Text>
-        </View>
-        <View style={styles.statItem}>
-          <Text style={[styles.statNumber, {color: '#555'}]}>{buzzes.filter(b => b.response === 'none').length}</Text>
-          <Text style={styles.statLabel}>None</Text>
-        </View>
+      <View style={styles.filterBar}>
+        <TouchableOpacity style={[styles.filterChip, filter === 'all' && styles.filterChipActive]} onPress={() => setFilter('all')}>
+          <Text style={[styles.filterChipText, filter === 'all' && styles.filterChipTextActive]}>All ({buzzes.length})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.filterChip, filter === 'ack' && {backgroundColor: '#4CAF5030', borderColor: '#4CAF50'}]} onPress={() => setFilter('ack')}>
+          <Text style={[styles.filterChipText, filter === 'ack' && {color: '#4CAF50'}]}>Ack ({buzzes.filter(b => b.response === 'ack').length})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.filterChip, filter === 'five_min' && {backgroundColor: '#FF980030', borderColor: '#FF9800'}]} onPress={() => setFilter('five_min')}>
+          <Text style={[styles.filterChipText, filter === 'five_min' && {color: '#FF9800'}]}>5 min ({buzzes.filter(b => b.response === 'five_min').length})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.filterChip, filter === 'busy' && {backgroundColor: '#F4433630', borderColor: '#F44336'}]} onPress={() => setFilter('busy')}>
+          <Text style={[styles.filterChipText, filter === 'busy' && {color: '#F44336'}]}>Busy ({buzzes.filter(b => b.response === 'busy').length})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.filterChip, filter === 'none' && {backgroundColor: '#55555530', borderColor: '#555'}]} onPress={() => setFilter('none')}>
+          <Text style={[styles.filterChipText, filter === 'none' && {color: '#aaa'}]}>None ({buzzes.filter(b => b.response === 'none').length})</Text>
+        </TouchableOpacity>
       </View>
       {loading ? (
         <View style={styles.center}><ActivityIndicator color="#FF4D4D" size="large" /></View>
@@ -175,7 +178,7 @@ const HistoryScreen: React.FC<Props> = ({onBack}) => {
         </View>
       ) : (
         <FlatList
-          data={buzzes}
+          data={filter === 'all' ? buzzes : buzzes.filter(b => b.response === filter)}
           renderItem={renderItem}
           keyExtractor={item => item.id}
           contentContainerStyle={[styles.list, {paddingBottom: insets.bottom + 24}]}
@@ -197,10 +200,11 @@ const styles = StyleSheet.create({
   headerTitle: {color: '#fff', fontSize: 20, fontWeight: '800'},
   periodBadge: {backgroundColor: '#1A1A1A', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12},
   periodText: {color: '#888', fontSize: 12, fontWeight: '600'},
-  stats: {flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 16, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#1A1A1A'},
-  statItem: {alignItems: 'center'},
-  statNumber: {color: '#fff', fontSize: 22, fontWeight: '800'},
-  statLabel: {color: '#666', fontSize: 11, fontWeight: '600', marginTop: 2},
+  filterBar: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#1A1A1A'},
+  filterChip: {paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#333', backgroundColor: '#1A1A1A'},
+  filterChipActive: {backgroundColor: '#3a1515', borderColor: '#FF4D4D'},
+  filterChipText: {color: '#888', fontSize: 12, fontWeight: '700'},
+  filterChipTextActive: {color: '#FF4D4D'},
   center: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   emptyIcon: {fontSize: 48, marginBottom: 12},
   emptyText: {color: '#666', fontSize: 16},

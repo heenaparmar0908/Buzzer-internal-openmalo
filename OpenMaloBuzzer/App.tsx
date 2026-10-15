@@ -1,8 +1,8 @@
 import React, {useState, useEffect, useCallback, useRef} from 'react';
-import {StatusBar, ActivityIndicator, View, StyleSheet, AppState, NativeModules, Platform, PermissionsAndroid} from 'react-native';
+import {StatusBar, ActivityIndicator, View, StyleSheet, AppState, NativeModules, Platform, PermissionsAndroid, DeviceEventEmitter} from 'react-native';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {useAuth} from './src/hooks/useAuth';
-import {createNotificationChannel, setupNotificationListeners, showBuzzNotification, cancelBuzzNotification} from './src/services/notification';
+import {createNotificationChannel, setupNotificationListeners, cancelBuzzNotification} from './src/services/notification';
 import {respondToBuzz, subscribeToIncomingBuzzes, subscribeToUsers, requestFcmPermission} from './src/services/firebase';
 import {promptBatteryOptimization} from './src/services/batteryOptimization';
 import {BuzzPayload, User, Group} from './src/types';
@@ -74,19 +74,18 @@ function App() {
     const unsubscribe = subscribeToIncomingBuzzes(
       user.id,
       (buzz) => {
-        const payload: BuzzPayload = {
-          buzz_id: buzz.id,
-          from_user_id: buzz.from_user_id,
-          from_user_name: usersMapRef.current[buzz.from_user_id] || 'Someone',
-          reason: buzz.reason,
-          note: buzz.note,
-        };
         if (AppState.currentState === 'active') {
+          const payload: BuzzPayload = {
+            buzz_id: buzz.id,
+            from_user_id: buzz.from_user_id,
+            from_user_name: usersMapRef.current[buzz.from_user_id] || 'Someone',
+            reason: buzz.reason,
+            note: buzz.note,
+          };
           setIncomingPayload(payload);
           setScreen('incoming');
-        } else {
-          showBuzzNotification(payload).catch(() => {});
         }
+        // Background/killed notifications are handled by FCM setBackgroundMessageHandler
       },
       (buzzId) => {
         cancelBuzzNotification(buzzId).catch(() => {});
@@ -121,6 +120,7 @@ function App() {
             return prev;
           });
         }
+        // Voice message notifications handled by native BuzzerService
       });
       return unsub;
     } catch (err) {
@@ -136,27 +136,44 @@ function App() {
     return unsubscribe;
   }, []);
 
+  // Listen for native navigation events (foreground notification tap)
   useEffect(() => {
     if (!user) return;
-    const checkPendingBuzz = () => {
-      BuzzerService?.getPendingBuzz?.()
-        .then((data: any) => {
-          if (data?.buzz_id) {
-            setIncomingPayload({
-              buzz_id: data.buzz_id,
-              from_user_id: data.from_user_id,
-              from_user_name: data.from_user_name || 'Someone',
-              reason: data.reason,
-              note: data.note || null,
-            });
-            setScreen('incoming');
-          }
-        })
-        .catch(() => {});
+    const sub = DeviceEventEmitter.addListener('onNavigate', (event: any) => {
+      if (event?.screen === 'voice_mail') {
+        setSelectedUser(null);
+        setScreen('voice-mail');
+      }
+    });
+    return () => sub.remove();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const checkPending = async () => {
+      try {
+        const nav = await BuzzerService?.getPendingNavigation?.();
+        if (nav === 'voice_mail') {
+          setSelectedUser(null);
+          setScreen('voice-mail');
+          return;
+        }
+        const data = await BuzzerService?.getPendingBuzz?.();
+        if (data?.buzz_id) {
+          setIncomingPayload({
+            buzz_id: data.buzz_id,
+            from_user_id: data.from_user_id,
+            from_user_name: data.from_user_name || 'Someone',
+            reason: data.reason,
+            note: data.note || null,
+          });
+          setScreen('incoming');
+        }
+      } catch {}
     };
-    checkPendingBuzz();
+    checkPending();
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') checkPendingBuzz();
+      if (state === 'active') checkPending();
     });
     return () => sub.remove();
   }, [user]);
@@ -225,7 +242,7 @@ function App() {
           {screen === 'voice-mail' && <VoiceMailScreen currentUser={user} targetUser={selectedUser || undefined} onBack={() => { setSelectedUser(null); setScreen('home'); }} />}
           {screen === 'settings' && <SettingsScreen currentUser={user} onBack={() => setScreen('home')} />}
           {screen === 'profile' && <ProfileScreen currentUser={user} onBack={() => setScreen('home')} onLogout={handleLogout} onDeleteAccount={handleDeleteAccount} onUpdateProfile={updateProfile} onChangePin={changePin} />}
-          {screen === 'history' && <HistoryScreen onBack={() => setScreen('home')} />}
+          {screen === 'history' && <HistoryScreen currentUser={user} onBack={() => setScreen('home')} />}
         </>
       )}
     </SafeAreaProvider>

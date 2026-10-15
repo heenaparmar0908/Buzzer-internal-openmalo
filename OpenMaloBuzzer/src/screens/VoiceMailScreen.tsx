@@ -4,7 +4,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Sound from 'react-native-sound';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import {User, VoiceMail} from '../types';
-import {subscribeToVoiceMails, markVoiceMailListened, deleteVoiceMail, addVoiceMail, getUsers} from '../services/firebase';
+import {subscribeToVoiceMails, markVoiceMailListened, deleteVoiceMail, addVoiceMail, subscribeToUsers} from '../services/firebase';
 import {uploadVoiceMail} from '../services/supabase';
 
 Sound.setCategory('Playback');
@@ -27,18 +27,22 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
   const [recordedPath, setRecordedPath] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [deleteModal, setDeleteModal] = useState<VoiceMail | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteMultiModal, setDeleteMultiModal] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const soundRef = useRef<Sound | null>(null);
 
   useEffect(() => {
-    const unsub = subscribeToVoiceMails(currentUser.id, setMails);
-    getUsers().then(users => {
+    const unsub1 = subscribeToVoiceMails(currentUser.id, setMails);
+    const unsub2 = subscribeToUsers(users => {
       const map: Record<string, string> = {};
       users.forEach(u => { map[u.id] = u.name; });
       setUsersMap(map);
-    }).catch(() => {});
+    });
     return () => {
-      unsub();
+      unsub1();
+      unsub2();
       stopTimer();
       stopSound();
     };
@@ -114,6 +118,7 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
       // Save metadata with URL to Firestore
       await addVoiceMail({
         from_user_id: currentUser.id,
+        from_user_name: currentUser.name,
         to_user_id: targetUser.id,
         audio_url: publicUrl,
         duration_seconds: recordTime,
@@ -202,35 +207,87 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
     setDeleteModal(mail);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteModal) return;
     stopSound();
     setPlaying(null);
-    deleteVoiceMail(deleteModal.id).catch(() => {});
-    setMails(prev => prev.filter(m => m.id !== deleteModal.id));
+    const id = deleteModal.id;
     setDeleteModal(null);
+    try {
+      await deleteVoiceMail(id);
+    } catch {
+      Alert.alert('Error', 'Failed to delete voice message');
+    }
   };
 
-  const unreadCount = mails.filter(m => !m.listened).length;
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === mails.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(mails.map(m => m.id)));
+    }
+  };
+
+  const confirmDeleteMulti = async () => {
+    stopSound();
+    setPlaying(null);
+    const ids = Array.from(selectedIds);
+    setSelectedIds(new Set());
+    setSelectMode(false);
+    setDeleteMultiModal(false);
+    try {
+      await Promise.all(ids.map(id => deleteVoiceMail(id)));
+    } catch {
+      Alert.alert('Error', 'Some messages could not be deleted');
+    }
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
 
   // ─── RENDER ───
   const renderMail = ({item}: {item: VoiceMail}) => {
     const isPlaying = playing === item.id;
+    const isSelected = selectedIds.has(item.id);
     return (
-      <TouchableOpacity style={[styles.mailRow, !item.listened && styles.mailRowUnread]} onPress={() => playVoiceMail(item)} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={[styles.mailRow, !item.listened && styles.mailRowUnread, selectMode && isSelected && styles.mailRowSelected]}
+        onPress={() => selectMode ? toggleSelect(item.id) : playVoiceMail(item)}
+        onLongPress={() => { if (!selectMode) { setSelectMode(true); toggleSelect(item.id); } }}
+        activeOpacity={0.7}>
+        {selectMode && (
+          <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+            {isSelected && <Icon name="check" size={14} color="#fff" />}
+          </View>
+        )}
         <View style={styles.mailAvatar}>
-          <Text style={styles.mailAvatarText}>{(usersMap[item.from_user_id] || '?').charAt(0)}</Text>
+          <Text style={styles.mailAvatarText}>{(item.from_user_name || usersMap[item.from_user_id] || '?').charAt(0)}</Text>
         </View>
         <View style={styles.mailContent}>
-          <Text style={styles.mailFrom}>{usersMap[item.from_user_id] || 'Unknown'}</Text>
+          <Text style={styles.mailFrom}>{item.from_user_name || usersMap[item.from_user_id] || 'Unknown'}</Text>
           <Text style={styles.mailMeta}>{formatTime(item.duration_seconds)} · {formatDate(item.created_at)}</Text>
         </View>
-        <View style={[styles.playBtn, isPlaying && styles.playBtnActive]}>
-          <Icon name={isPlaying ? 'pause' : 'play-arrow'} size={18} color={isPlaying ? '#fff' : '#ccc'} />
-        </View>
-        <TouchableOpacity style={styles.deleteMailBtn} onPress={() => handleDeleteMail(item)}>
-          <Icon name="delete-outline" size={18} color="#666" />
-        </TouchableOpacity>
+        {!selectMode && (
+          <>
+            <View style={[styles.playBtn, isPlaying && styles.playBtnActive]}>
+              <Icon name={isPlaying ? 'pause' : 'play-arrow'} size={18} color={isPlaying ? '#fff' : '#ccc'} />
+            </View>
+            <TouchableOpacity style={styles.deleteMailBtn} onPress={() => handleDeleteMail(item)}>
+              <Icon name="delete-outline" size={18} color="#666" />
+            </TouchableOpacity>
+          </>
+        )}
         {!item.listened && <View style={styles.unreadDot} />}
       </TouchableOpacity>
     );
@@ -241,10 +298,35 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
   return (
     <View style={styles.container}>
       <View style={[styles.header, {paddingTop: insets.top + 12}]}>
-        <TouchableOpacity onPress={onBack}><Text style={styles.backBtn}>← Back</Text></TouchableOpacity>
-        <Text style={styles.headerTitle}>{isRecordMode ? `To ${targetUser!.name}` : 'Voice Message'}</Text>
-        <View style={{width: 50}} />
+        <TouchableOpacity onPress={selectMode ? exitSelectMode : onBack}>
+          <Text style={styles.backBtn}>{selectMode ? 'Cancel' : '← Back'}</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>
+          {selectMode ? `${selectedIds.size} selected` : isRecordMode ? `To ${targetUser!.name}` : 'Voice Message'}
+        </Text>
+        {!isRecordMode && mails.length > 0 && !selectMode ? (
+          <TouchableOpacity onPress={() => setSelectMode(true)}>
+            <Text style={styles.selectBtn}>Select</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={{width: 50}} />
+        )}
       </View>
+      {selectMode && (
+        <View style={styles.selectBar}>
+          <TouchableOpacity style={styles.selectAllBtn} onPress={selectAll}>
+            <Icon name={selectedIds.size === mails.length ? 'check-box' : 'check-box-outline-blank'} size={20} color="#ccc" />
+            <Text style={styles.selectAllText}>Select All</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.deleteSelectedBtn, selectedIds.size === 0 && {opacity: 0.4}]}
+            onPress={() => selectedIds.size > 0 && setDeleteMultiModal(true)}
+            disabled={selectedIds.size === 0}>
+            <Icon name="delete" size={18} color="#F44336" />
+            <Text style={styles.deleteSelectedText}>Delete ({selectedIds.size})</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {!isRecordMode ? (
         mails.length === 0 ? (
@@ -314,13 +396,34 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
             </View>
             <Text style={styles.modalTitle}>Delete Voice Message</Text>
             <Text style={styles.modalMessage}>
-              Delete voice message from {deleteModal ? (usersMap[deleteModal.from_user_id] || 'Unknown') : ''}?
+              Delete voice message from {deleteModal ? (deleteModal.from_user_name || usersMap[deleteModal.from_user_id] || 'Unknown') : ''}?
             </Text>
             <View style={styles.modalButtons}>
               <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setDeleteModal(null)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalDeleteBtn} onPress={confirmDelete}>
+                <Text style={styles.modalConfirmText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={deleteMultiModal} transparent animationType="fade" onRequestClose={() => setDeleteMultiModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalIconWrap}>
+              <Icon name="delete-forever" size={30} color="#F44336" />
+            </View>
+            <Text style={styles.modalTitle}>Delete {selectedIds.size} Message{selectedIds.size > 1 ? 's' : ''}</Text>
+            <Text style={styles.modalMessage}>
+              {selectedIds.size === mails.length ? 'Delete all voice messages?' : `Delete ${selectedIds.size} selected voice message${selectedIds.size > 1 ? 's' : ''}?`}
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setDeleteMultiModal(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalDeleteBtn} onPress={confirmDeleteMulti}>
                 <Text style={styles.modalConfirmText}>Delete</Text>
               </TouchableOpacity>
             </View>
@@ -335,6 +438,15 @@ const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0D0D0D'},
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12},
   backBtn: {color: '#FF4D4D', fontSize: 16, fontWeight: '600'},
+  selectBtn: {color: '#FF4D4D', fontSize: 14, fontWeight: '600'},
+  selectBar: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10},
+  selectAllBtn: {flexDirection: 'row', alignItems: 'center', gap: 8},
+  selectAllText: {color: '#ccc', fontSize: 14, fontWeight: '600'},
+  deleteSelectedBtn: {flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#3a1010', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8},
+  deleteSelectedText: {color: '#F44336', fontSize: 13, fontWeight: '700'},
+  checkbox: {width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#555', alignItems: 'center', justifyContent: 'center', marginRight: 10},
+  checkboxSelected: {backgroundColor: '#FF4D4D', borderColor: '#FF4D4D'},
+  mailRowSelected: {backgroundColor: '#2a1515'},
   headerTitle: {color: '#fff', fontSize: 20, fontWeight: '700'},
   list: {paddingHorizontal: 16},
   mailRow: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#141414', borderRadius: 12, padding: 12, marginBottom: 8},

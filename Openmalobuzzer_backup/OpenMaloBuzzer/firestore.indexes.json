@@ -1,0 +1,37 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "reasons",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "is_active", "order": "ASCENDING"},
+        {"fieldPath": "sort_order", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "phone", "order": "ASCENDING"},
+        {"fieldPath": "is_active", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "call_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "caller_id", "order": "ASCENDING"},
+        {"fieldPath": "started_at", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "voice_mails",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "to_user_id", "order": "ASCENDING"},
+        {"fieldPath": "created_at", "order": "DESCENDING"}
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

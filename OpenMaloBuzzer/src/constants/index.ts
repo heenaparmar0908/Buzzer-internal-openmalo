@@ -7,6 +7,9 @@ export const PRESENCE_TIMEOUT_MS = 120000; // 2 minutes
 export const NOTIFICATION_CHANNEL_ID = 'openmalo_buzz';
 export const NOTIFICATION_CHANNEL_NAME = 'OpenMalo Buzz';
 
+export const VOICEMAIL_CHANNEL_ID = 'openmalo_voicemail';
+export const VOICEMAIL_CHANNEL_NAME = 'Voice Messages';
+
 export const COLLECTIONS = {
   USERS: 'users',
   BUZZES: 'buzzes',

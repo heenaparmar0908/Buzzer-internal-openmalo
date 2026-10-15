@@ -71,23 +71,8 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
     onDismiss();
   };
 
-  const handleDismiss = async () => {
-    Vibration.cancel();
-    if (soundRef.current) {
-      soundRef.current.stop();
-      soundRef.current.release();
-    }
-    NativeModules.BuzzerService?.stopAlarm();
-    await respondToBuzz(payload.buzz_id, 'dismissed');
-    await cancelBuzzNotification(payload.buzz_id);
-    onDismiss();
-  };
-
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={[styles.closeBtn, {top: insets.top + 8}]} onPress={handleDismiss}>
-        <Icon name="close" size={22} color="#999" />
-      </TouchableOpacity>
       <View style={styles.content}>
         <View style={styles.avatarLarge}>
           <Text style={styles.avatarText}>
@@ -134,25 +119,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0D0D0D',
     justifyContent: 'space-between',
-  },
-  closeBtn: {
-    position: 'absolute',
-    top: 0,
-    right: 20,
-    zIndex: 10,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#1A1A1A',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  closeBtnText: {
-    color: '#999',
-    fontSize: 20,
-    fontWeight: '700',
   },
   content: {
     flex: 1,

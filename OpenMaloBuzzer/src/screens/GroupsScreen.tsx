@@ -24,7 +24,7 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
 
   useEffect(() => {
     const unsub = subscribeToUsers(users => {
-      setAllUsers(users.filter(u => u.id !== currentUser.id));
+      setAllUsers(users);
     });
     return unsub;
   }, [currentUser.id]);
@@ -39,6 +39,7 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
   };
 
   const handleCreate = async () => {
+    if (currentUser.role === 'member') return;
     if (!groupName.trim()) return;
     if (selectedIds.size < 2) {
       setModal({visible: true, title: 'Error', message: 'Select at least 2 members'});
@@ -64,6 +65,7 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
   };
 
   const handleSaveEdit = async () => {
+    if (currentUser.role === 'member') return;
     if (!editingGroup || !groupName.trim() || selectedIds.size < 2) return;
     await updateGroup(editingGroup.id, {name: groupName.trim(), member_ids: Array.from(selectedIds)});
     setEditingGroup(null);
@@ -83,6 +85,8 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
 
   const dismissModal = () => setModal(prev => ({...prev, visible: false}));
 
+  const canCreateGroup = currentUser.role === 'owner' || currentUser.role === 'manager';
+
   const myGroups = groups.filter(
     g => g.created_by === currentUser.id || g.member_ids.includes(currentUser.id),
   );
@@ -92,13 +96,15 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
       <View style={[styles.header, {paddingTop: insets.top + 12}]}>
         <TouchableOpacity onPress={onBack}><Text style={styles.backBtn}>← Back</Text></TouchableOpacity>
         <Text style={styles.headerTitle}>Groups</Text>
-        <TouchableOpacity onPress={() => { setShowCreate(!showCreate); setEditingGroup(null); setGroupName(''); setSelectedIds(new Set()); }}>
-          {showCreate ? <Icon name="close" size={20} color="#FF4D4D" /> : <Text style={styles.addBtn}>+ New</Text>}
-        </TouchableOpacity>
+        {canCreateGroup ? (
+          <TouchableOpacity onPress={() => { setShowCreate(!showCreate); setEditingGroup(null); setGroupName(''); setSelectedIds(new Set()); }}>
+            {showCreate ? <Icon name="close" size={20} color="#FF4D4D" /> : <Text style={styles.addBtn}>+ New</Text>}
+          </TouchableOpacity>
+        ) : <View />}
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={{paddingBottom: insets.bottom + 16}}>
-        {showCreate && (
+        {showCreate && canCreateGroup && (
           <View style={styles.createForm}>
             <TextInput
               style={styles.input}
@@ -110,7 +116,7 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
             />
             <Text style={styles.label}>Select members ({selectedIds.size} selected)</Text>
             <View style={styles.memberList}>
-              {allUsers.map(u => (
+              {allUsers.filter(u => u.id !== currentUser.id).map(u => (
                 <TouchableOpacity
                   key={u.id}
                   style={[styles.memberChip, selectedIds.has(u.id) && styles.memberChipActive]}
@@ -136,17 +142,17 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
           <View style={styles.emptyState}>
             <Icon name="group" size={48} color="#888" style={{marginBottom: 12}} />
             <Text style={styles.emptyText}>No groups yet</Text>
-            <Text style={styles.emptySubtext}>Create a group to buzz multiple people at once</Text>
+            <Text style={styles.emptySubtext}>{canCreateGroup ? 'Create a group to buzz multiple people at once' : 'You are not part of any group yet'}</Text>
           </View>
         )}
 
         {myGroups.map(group => {
           const memberNames = group.member_ids
-            .map(id => allUsers.find(u => u.id === id)?.name || '?')
+            .map(id => id === currentUser.id ? 'You' : (allUsers.find(u => u.id === id)?.name || 'Unknown'))
             .join(', ');
           return (
             <View key={group.id} style={styles.groupCard}>
-              <TouchableOpacity style={styles.groupCardMain} onPress={() => onBuzzGroup(group)} activeOpacity={0.7}>
+              <TouchableOpacity style={styles.groupCardMain} onPress={() => canCreateGroup && onBuzzGroup(group)} activeOpacity={canCreateGroup ? 0.7 : 1}>
                 <View style={styles.groupAvatar}>
                   <Icon name="group" size={22} color="#FF4D4D" />
                 </View>
@@ -156,7 +162,7 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
                   <Text style={styles.groupCount}>{group.member_ids.length} members</Text>
                 </View>
               </TouchableOpacity>
-              {group.created_by === currentUser.id && (
+              {canCreateGroup && group.created_by === currentUser.id && (
                 <View style={styles.groupActions}>
                   <TouchableOpacity onPress={() => handleEdit(group)}>
                     <Text style={styles.editBtn}>Edit</Text>

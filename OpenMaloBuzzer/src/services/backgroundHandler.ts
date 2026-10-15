@@ -3,7 +3,7 @@ import notifee, {
   AndroidImportance,
   AndroidVisibility,
 } from '@notifee/react-native';
-import {NOTIFICATION_CHANNEL_ID, NOTIFICATION_CHANNEL_NAME} from '../constants';
+import {NOTIFICATION_CHANNEL_ID, NOTIFICATION_CHANNEL_NAME, VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
 
 export const setupBackgroundHandler = () => {
   // Handle notification actions in background
@@ -69,6 +69,32 @@ export const setupBackgroundHandler = () => {
             autoCancel: false,
           },
           data: data as any,
+        });
+      }
+
+      if (data.type === 'voice_message') {
+        await notifee.createChannel({
+          id: VOICEMAIL_CHANNEL_ID,
+          name: VOICEMAIL_CHANNEL_NAME,
+          importance: AndroidImportance.HIGH,
+          visibility: AndroidVisibility.PUBLIC,
+          sound: 'default',
+          vibration: true,
+        });
+
+        const fromName = data.from_user_name || 'Someone';
+        const duration = data.duration || '0';
+
+        await notifee.displayNotification({
+          title: `Voice message from ${fromName}`,
+          body: `${duration}s voice message`,
+          android: {
+            channelId: VOICEMAIL_CHANNEL_ID,
+            importance: AndroidImportance.HIGH,
+            sound: 'default',
+            pressAction: {id: 'default'},
+            autoCancel: true,
+          },
         });
       }
 

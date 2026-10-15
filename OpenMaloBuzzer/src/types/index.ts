@@ -51,11 +51,13 @@ export interface CallLog {
 export interface VoiceMail {
   id: string;
   from_user_id: string;
+  from_user_name?: string;
   to_user_id: string;
   audio_url: string;
   duration_seconds: number;
   created_at: number;
   listened: boolean;
+  deleted?: boolean;
 }
 
 export interface BuzzPayload {

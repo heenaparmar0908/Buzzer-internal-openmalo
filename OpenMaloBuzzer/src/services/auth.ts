@@ -116,3 +116,13 @@ export const changePin = async (
   const newHash = hashPin(newPin);
   await resetUserPin(user.id, newHash);
 };
+
+export const resetForgottenPin = async (
+  phone: string,
+  newPin: string,
+): Promise<void> => {
+  const user = await getUserByPhone(phone);
+  if (!user) throw new Error('No account found with this phone number');
+  const newHash = hashPin(newPin);
+  await resetUserPin(user.id, newHash);
+};

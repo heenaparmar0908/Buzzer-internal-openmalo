@@ -67,6 +67,17 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun getPendingNavigation(promise: Promise) {
+        val nav = MainActivity.pendingNavigation
+        if (nav != null) {
+            MainActivity.pendingNavigation = null
+            promise.resolve(nav)
+        } else {
+            promise.resolve(null)
+        }
+    }
+
+    @ReactMethod
     fun readFileBase64(filePath: String, promise: Promise) {
         try {
             val file = File(filePath)
@@ -233,6 +244,8 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
             mediaRecorder = recorder
             promise.resolve(recordingPath)
         } catch (e: Exception) {
+            mediaRecorder?.let { try { it.release() } catch (_: Exception) {} }
+            mediaRecorder = null
             promise.reject("RECORDING_ERROR", e.message)
         }
     }
