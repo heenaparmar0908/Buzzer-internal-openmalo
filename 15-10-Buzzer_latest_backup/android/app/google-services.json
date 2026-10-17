@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "757981698802",
+    "project_id": "buzzer-5936f",
+    "storage_bucket": "buzzer-5936f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:757981698802:android:27932ef30736a8eba44e6b",
+        "android_client_info": {
+          "package_name": "com.openmalobuzzer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA1RD_G1LgivaWCT8DyGIOCZc-AFAQ9BRY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

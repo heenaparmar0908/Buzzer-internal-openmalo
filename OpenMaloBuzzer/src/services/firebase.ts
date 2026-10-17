@@ -91,20 +91,23 @@ export const subscribeToBuzz = (buzzId: string, callback: (buzz: Buzz) => void) 
     err => console.warn('subscribeToBuzz error:', err),
   );
 
-export const getRecentBuzzes = (userId: string, count = 20) =>
-  getDocs(
+export const getRecentBuzzes = (userId: string, count = 20) => {
+  const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
+  return getDocs(
     query(
       collection(db, COLLECTIONS.BUZZES),
       where('from_user_id', '==', userId),
+      where('created_at', '>=', fiveDaysAgo),
       orderBy('created_at', 'desc'),
       firestoreLimit(count),
     ),
   ).then(snap => snap.docs.map(d => ({id: d.id, ...d.data()} as Buzz)));
+};
 
 const PAGE_SIZE = 15;
 
 export const getBuzzLogPage = async (lastDoc?: any) => {
-  const since = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 days
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days
   const constraints: any[] = [
     where('created_at', '>=', since),
     orderBy('created_at', 'desc'),
@@ -262,6 +265,8 @@ export const createGroupBuzz = async (
   memberIds: string[],
   reason: string,
   note: string | null,
+  groupId: string,
+  groupName: string,
 ) => {
   const now = Date.now();
   const promises = memberIds.map(memberId =>
@@ -274,6 +279,8 @@ export const createGroupBuzz = async (
       responded_at: null,
       response: 'none',
       escalated: false,
+      group_id: groupId,
+      group_name: groupName,
     }),
   );
   return Promise.all(promises);

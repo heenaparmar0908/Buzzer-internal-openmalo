@@ -22,6 +22,8 @@ export interface Buzz {
   responded_at: number | null;
   response: BuzzResponse;
   escalated: boolean;
+  group_id?: string;
+  group_name?: string;
 }
 
 export interface Reason {

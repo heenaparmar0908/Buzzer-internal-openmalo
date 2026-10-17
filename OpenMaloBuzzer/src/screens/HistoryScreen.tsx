@@ -4,6 +4,11 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import {Buzz, User} from '../types';
 import {getBuzzLogPage, getUsers} from '../services/firebase';
+import {useGroups} from '../hooks/useGroups';
+
+type DisplayItem =
+  | {type: 'single'; buzz: Buzz; id: string}
+  | {type: 'group'; buzzes: Buzz[]; groupName: string; id: string};
 
 interface Props {
   currentUser: User;
@@ -19,15 +24,58 @@ const RESPONSE_MAP: Record<string, {label: string; color: string; icon: string}>
   none: {label: 'No response', color: '#555', icon: '—'},
 };
 
+const groupBuzzes = (buzzes: Buzz[], groupsMap: Record<string, string>): DisplayItem[] => {
+  const items: DisplayItem[] = [];
+  const used = new Set<string>();
+
+  for (const buzz of buzzes) {
+    if (used.has(buzz.id)) continue;
+
+    // Check if this is a group buzz (has group_id, or shares from_user_id + created_at with others)
+    let groupKey: string | null = null;
+    if (buzz.group_id) {
+      groupKey = `${buzz.group_id}_${buzz.created_at}`;
+    } else {
+      // Heuristic for old data: same sender + exact same timestamp = group buzz
+      const siblings = buzzes.filter(
+        b => !used.has(b.id) && b.from_user_id === buzz.from_user_id && b.created_at === buzz.created_at && b.id !== buzz.id,
+      );
+      if (siblings.length > 0) {
+        groupKey = `${buzz.from_user_id}_${buzz.created_at}`;
+      }
+    }
+
+    if (groupKey) {
+      const related = buzzes.filter(
+        b => !used.has(b.id) && (
+          (buzz.group_id && b.group_id === buzz.group_id && b.created_at === buzz.created_at) ||
+          (!buzz.group_id && b.from_user_id === buzz.from_user_id && b.created_at === buzz.created_at)
+        ),
+      );
+      related.forEach(b => used.add(b.id));
+      const groupName = buzz.group_name || (buzz.group_id && groupsMap[buzz.group_id]) || `Group (${related.length} members)`;
+      items.push({type: 'group', buzzes: related, groupName, id: groupKey});
+    } else {
+      used.add(buzz.id);
+      items.push({type: 'single', buzz, id: buzz.id});
+    }
+  }
+  return items;
+};
+
 const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
   const insets = useSafeAreaInsets();
   const [buzzes, setBuzzes] = useState<Buzz[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
+  const {groups} = useGroups();
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState<string>('all');
   const [hasMore, setHasMore] = useState(true);
   const lastDocRef = useRef<any>(null);
+
+  const groupsMap: Record<string, string> = {};
+  groups.forEach(g => { groupsMap[g.id] = g.name; });
 
   useEffect(() => {
     const load = async () => {
@@ -89,10 +137,10 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
     return diff < 60 ? `${diff}s` : `${Math.floor(diff / 60)}m ${diff % 60}s`;
   };
 
-  const renderItem = ({item}: {item: Buzz}) => {
-    const resp = RESPONSE_MAP[item.response] || RESPONSE_MAP.none;
-    const fromName = item.from_user_id === currentUser.id ? 'You' : (usersMap[item.from_user_id] || '?');
-    const toName = item.to_user_id === currentUser.id ? 'You' : (usersMap[item.to_user_id] || '?');
+  const renderSingleBuzz = (buzz: Buzz) => {
+    const resp = RESPONSE_MAP[buzz.response] || RESPONSE_MAP.none;
+    const fromName = buzz.from_user_id === currentUser.id ? 'You' : (usersMap[buzz.from_user_id] || '?');
+    const toName = buzz.to_user_id === currentUser.id ? 'You' : (usersMap[buzz.to_user_id] || '?');
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -106,30 +154,80 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
             </View>
             <View style={styles.namesCol}>
               <Text style={styles.names}>{fromName} → {toName}</Text>
-              <Text style={styles.time}>{formatTime(item.created_at)}</Text>
+              <Text style={styles.time}>{formatTime(buzz.created_at)}</Text>
             </View>
           </View>
-          {item.escalated && (
+          {buzz.escalated && (
             <View style={styles.escalatedBadge}>
               <Text style={styles.escalatedText}>ESCALATED</Text>
             </View>
           )}
         </View>
         <View style={styles.reasonRow}>
-          <Text style={styles.reason}>{item.reason}</Text>
-          {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
+          <Text style={styles.reason}>{buzz.reason}</Text>
+          {buzz.note ? <Text style={styles.note}>{buzz.note}</Text> : null}
         </View>
         <View style={styles.responseRow}>
           <View style={[styles.responseBadge, {backgroundColor: resp.color + '20', borderColor: resp.color + '40'}]}>
             <Icon name={resp.icon} size={14} color={resp.color} />
             <Text style={[styles.responseLabel, {color: resp.color}]}>{resp.label}</Text>
           </View>
-          {responseTime(item) ? (
-            <Text style={styles.responseTime}>Responded in {responseTime(item)}</Text>
+          {responseTime(buzz) ? (
+            <Text style={styles.responseTime}>Responded in {responseTime(buzz)}</Text>
           ) : null}
         </View>
       </View>
     );
+  };
+
+  const renderGroupBuzz = (buzzes: Buzz[], groupName: string) => {
+    const first = buzzes[0];
+    const fromName = first.from_user_id === currentUser.id ? 'You' : (usersMap[first.from_user_id] || '?');
+    const respondedCount = buzzes.filter(b => b.response !== 'none').length;
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.avatarRow}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{fromName.charAt(0)}</Text>
+            </View>
+            <Text style={styles.arrow}>→</Text>
+            <View style={[styles.avatar, {backgroundColor: '#252525'}]}>
+              <Icon name="group" size={16} color="#ccc" />
+            </View>
+            <View style={styles.namesCol}>
+              <Text style={styles.names}>{fromName} → {groupName}</Text>
+              <Text style={styles.time}>{formatTime(first.created_at)}</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.reasonRow}>
+          <Text style={styles.reason}>{first.reason}</Text>
+          {first.note ? <Text style={styles.note}>{first.note}</Text> : null}
+        </View>
+        <View style={styles.groupResponseSummary}>
+          {buzzes.map(b => {
+            const resp = RESPONSE_MAP[b.response] || RESPONSE_MAP.none;
+            const memberName = b.to_user_id === currentUser.id ? 'You' : (usersMap[b.to_user_id] || '?');
+            return (
+              <View key={b.id} style={styles.groupMemberResponse}>
+                <Text style={styles.groupMemberName}>{memberName}</Text>
+                <View style={[styles.responseBadge, {backgroundColor: resp.color + '20', borderColor: resp.color + '40'}]}>
+                  <Icon name={resp.icon} size={12} color={resp.color} />
+                  <Text style={[styles.responseLabel, {color: resp.color, fontSize: 11}]}>{resp.label}</Text>
+                </View>
+              </View>
+            );
+          })}
+          <Text style={styles.groupRespondedCount}>{respondedCount}/{buzzes.length} responded</Text>
+        </View>
+      </View>
+    );
+  };
+
+  const renderItem = ({item}: {item: DisplayItem}) => {
+    if (item.type === 'group') return renderGroupBuzz(item.buzzes, item.groupName);
+    return renderSingleBuzz(item.buzz);
   };
 
   const renderFooter = () => {
@@ -149,7 +247,7 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{currentUser.role === 'member' ? 'My Buzzes' : 'Buzz Log'}</Text>
         <View style={styles.periodBadge}>
-          <Text style={styles.periodText}>30 days</Text>
+          <Text style={styles.periodText}>7 days</Text>
         </View>
       </View>
       <View style={styles.filterBar}>
@@ -165,20 +263,17 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
         <TouchableOpacity style={[styles.filterChip, filter === 'busy' && {backgroundColor: '#F4433630', borderColor: '#F44336'}]} onPress={() => setFilter('busy')}>
           <Text style={[styles.filterChipText, filter === 'busy' && {color: '#F44336'}]}>Busy ({buzzes.filter(b => b.response === 'busy').length})</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.filterChip, filter === 'none' && {backgroundColor: '#55555530', borderColor: '#555'}]} onPress={() => setFilter('none')}>
-          <Text style={[styles.filterChipText, filter === 'none' && {color: '#aaa'}]}>None ({buzzes.filter(b => b.response === 'none').length})</Text>
-        </TouchableOpacity>
       </View>
       {loading ? (
         <View style={styles.center}><ActivityIndicator color="#FF4D4D" size="large" /></View>
       ) : buzzes.length === 0 ? (
         <View style={styles.center}>
           <Icon name="inbox" size={48} color="#888" style={{marginBottom: 12}} />
-          <Text style={styles.emptyText}>No buzzes in the last 30 days</Text>
+          <Text style={styles.emptyText}>No buzzes in the last 7 days</Text>
         </View>
       ) : (
         <FlatList
-          data={filter === 'all' ? buzzes : buzzes.filter(b => b.response === filter)}
+          data={groupBuzzes(filter === 'all' ? buzzes : buzzes.filter(b => b.response === filter), groupsMap)}
           renderItem={renderItem}
           keyExtractor={item => item.id}
           contentContainerStyle={[styles.list, {paddingBottom: insets.bottom + 24}]}
@@ -196,38 +291,41 @@ const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0D0D0D'},
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#1A1A1A'},
   backButton: {paddingVertical: 4},
-  backBtn: {color: '#FF4D4D', fontSize: 20, fontWeight: '700'},
-  headerTitle: {color: '#fff', fontSize: 20, fontWeight: '800'},
+  backBtn: {color: '#FF4D4D', fontSize: 22, fontWeight: '700'},
+  headerTitle: {color: '#fff', fontSize: 22, fontWeight: '800'},
   periodBadge: {backgroundColor: '#1A1A1A', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12},
-  periodText: {color: '#888', fontSize: 12, fontWeight: '600'},
+  periodText: {color: '#888', fontSize: 13, fontWeight: '600'},
   filterBar: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#1A1A1A'},
   filterChip: {paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#333', backgroundColor: '#1A1A1A'},
   filterChipActive: {backgroundColor: '#3a1515', borderColor: '#FF4D4D'},
-  filterChipText: {color: '#888', fontSize: 12, fontWeight: '700'},
+  filterChipText: {color: '#888', fontSize: 13, fontWeight: '700'},
   filterChipTextActive: {color: '#FF4D4D'},
   center: {flex: 1, alignItems: 'center', justifyContent: 'center'},
-  emptyIcon: {fontSize: 48, marginBottom: 12},
-  emptyText: {color: '#666', fontSize: 16},
+  emptyText: {color: '#999', fontSize: 17},
   list: {paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24},
   card: {backgroundColor: '#1A1A1A', borderRadius: 14, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: '#252525'},
   cardHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10},
   avatarRow: {flexDirection: 'row', alignItems: 'center'},
-  avatar: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#333', alignItems: 'center', justifyContent: 'center'},
-  avatarText: {color: '#fff', fontSize: 14, fontWeight: '700'},
-  arrow: {color: '#555', fontSize: 14, marginHorizontal: 6},
+  avatar: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#333', alignItems: 'center', justifyContent: 'center'},
+  avatarText: {color: '#fff', fontSize: 15, fontWeight: '700'},
+  arrow: {color: '#888', fontSize: 15, marginHorizontal: 6},
   namesCol: {marginLeft: 10},
-  names: {color: '#fff', fontSize: 15, fontWeight: '700'},
-  time: {color: '#666', fontSize: 12, marginTop: 1},
+  names: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  time: {color: '#999', fontSize: 13, marginTop: 1},
   escalatedBadge: {backgroundColor: '#FF980020', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6},
-  escalatedText: {color: '#FF9800', fontSize: 10, fontWeight: '800', letterSpacing: 0.5},
+  escalatedText: {color: '#FF9800', fontSize: 11, fontWeight: '800', letterSpacing: 0.5},
   reasonRow: {marginBottom: 10},
-  reason: {color: '#ccc', fontSize: 14},
-  note: {color: '#888', fontSize: 13, fontStyle: 'italic', marginTop: 2},
+  reason: {color: '#ccc', fontSize: 15},
+  note: {color: '#888', fontSize: 14, fontStyle: 'italic', marginTop: 2},
   responseRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   responseBadge: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1},
-  responseIcon: {fontSize: 14, fontWeight: '700', marginRight: 6},
-  responseLabel: {fontSize: 13, fontWeight: '700'},
-  responseTime: {color: '#666', fontSize: 12},
+  responseIcon: {fontSize: 15, fontWeight: '700', marginRight: 6},
+  responseLabel: {fontSize: 14, fontWeight: '700'},
+  responseTime: {color: '#999', fontSize: 13},
+  groupResponseSummary: {gap: 6},
+  groupMemberResponse: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4},
+  groupMemberName: {color: '#ccc', fontSize: 14, fontWeight: '600'},
+  groupRespondedCount: {color: '#999', fontSize: 13, textAlign: 'right', marginTop: 4},
   footerLoader: {paddingVertical: 20, alignItems: 'center'},
 });
 

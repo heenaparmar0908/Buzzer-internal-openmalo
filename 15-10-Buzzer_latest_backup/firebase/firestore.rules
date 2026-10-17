@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Users ─────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['name', 'phone', 'pin_hash', 'role', 'is_active'])
+                    && request.resource.data.name is string
+                    && request.resource.data.phone is string
+                    && request.resource.data.role in ['owner', 'manager', 'member']
+                    && request.resource.data.is_active == true;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['name', 'phone', 'pin_hash', 'role', 'last_seen_at', 'is_active']);
+      allow delete: if false;
+    }
+
+    // ─── User Tokens (FCM) ────────────────────────────
+    match /user_tokens/{userId} {
+      allow read: if false;
+      allow write: if request.resource.data.keys().hasAll(['fcm_token'])
+                   && request.resource.data.fcm_token is string;
+      allow delete: if false;
+    }
+
+    // ─── Buzzes ───────────────────────────────────────
+    match /buzzes/{buzzId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['from_user_id', 'to_user_id', 'reason', 'response', 'created_at'])
+                    && request.resource.data.from_user_id is string
+                    && request.resource.data.to_user_id is string
+                    && request.resource.data.reason is string
+                    && request.resource.data.response == 'none'
+                    && request.resource.data.escalated == false;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['response', 'responded_at', 'escalated'])
+                    && request.resource.data.response in ['ack', 'five_min', 'busy', 'cancelled', 'dismissed', 'none'];
+      allow delete: if false;
+    }
+
+    // ─── Reasons ──────────────────────────────────────
+    match /reasons/{reasonId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['label', 'sort_order', 'is_active'])
+                    && request.resource.data.label is string
+                    && request.resource.data.is_active == true;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['label', 'sort_order', 'is_active']);
+      allow delete: if false;
+    }
+
+    // ─── Groups ───────────────────────────────────────
+    match /groups/{groupId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['name', 'member_ids', 'created_by', 'is_active'])
+                    && request.resource.data.name is string
+                    && request.resource.data.member_ids is list
+                    && request.resource.data.is_active == true;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['name', 'member_ids', 'is_active']);
+      allow delete: if false;
+    }
+
+    // ─── Voice Mails ──────────────────────────────────
+    match /voice_mails/{mailId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['from_user_id', 'to_user_id', 'audio_url', 'duration_seconds', 'created_at', 'listened'])
+                    && request.resource.data.from_user_id is string
+                    && request.resource.data.to_user_id is string
+                    && request.resource.data.audio_url is string
+                    && request.resource.data.listened == false;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['listened', 'deleted']);
+      allow delete: if false;
+    }
+
+    // ─── Call Logs ────────────────────────────────────
+    match /call_logs/{logId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['caller_id', 'receiver_id', 'started_at'])
+                    && request.resource.data.caller_id is string
+                    && request.resource.data.receiver_id is string;
+      allow update, delete: if false;
+    }
+
+    // ─── Settings ─────────────────────────────────────
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().size() > 0;
+      allow delete: if false;
+    }
+
+    // ─── Deny everything else ─────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

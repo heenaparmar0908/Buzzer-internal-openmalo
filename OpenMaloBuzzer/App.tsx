@@ -31,6 +31,8 @@ function App() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [incomingPayload, setIncomingPayload] = useState<BuzzPayload | null>(null);
+  const [initialReason, setInitialReason] = useState<string | undefined>(undefined);
+  const [autoSend, setAutoSend] = useState(false);
   const usersMapRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -198,8 +200,10 @@ function App() {
     await deleteAccount();
   }, [deleteAccount]);
 
-  const handleSelectUser = useCallback((u: User) => { setSelectedUser(u); setScreen('buzz'); }, []);
-  const handleCloseBuzz = useCallback(() => { setSelectedUser(null); setScreen('home'); }, []);
+  const handleSelectUser = useCallback((u: User) => { setAutoSend(false); setInitialReason(undefined); setSelectedUser(u); setScreen('buzz'); }, []);
+  const handleBuzzAgain = useCallback((u: User, reason: string) => { setAutoSend(true); setInitialReason(reason); setSelectedUser(u); setScreen('buzz'); }, []);
+  const handleEditBuzz = useCallback((u: User, reason: string) => { setAutoSend(false); setInitialReason(reason); setSelectedUser(u); setScreen('buzz'); }, []);
+  const handleCloseBuzz = useCallback(() => { setSelectedUser(null); setInitialReason(undefined); setAutoSend(false); setScreen('home'); }, []);
   const handleDismissIncoming = useCallback(() => { setIncomingPayload(null); setScreen('home'); }, []);
   const handleCallUser = useCallback((u: User) => { setSelectedUser(u); setScreen('voice-call'); }, []);
   const handleVoiceMail = useCallback((u?: User) => { setSelectedUser(u || null); setScreen('voice-mail'); }, []);
@@ -226,6 +230,8 @@ function App() {
             <HomeScreen
               currentUser={user}
               onSelectUser={handleSelectUser}
+              onBuzzAgain={handleBuzzAgain}
+              onEditBuzz={handleEditBuzz}
               onCallUser={handleCallUser}
               onVoiceMail={handleVoiceMail}
               onSettings={() => setScreen('settings')}
@@ -235,7 +241,7 @@ function App() {
               onBuzzGroup={handleBuzzGroup}
             />
           )}
-          {screen === 'buzz' && selectedUser && <BuzzSheet sender={user} receiver={selectedUser} onClose={handleCloseBuzz} />}
+          {screen === 'buzz' && selectedUser && <BuzzSheet key={selectedUser.id + (initialReason || '') + (autoSend ? '_auto' : '')} sender={user} receiver={selectedUser} onClose={handleCloseBuzz} initialReason={initialReason} autoSend={autoSend} />}
           {screen === 'groups' && <GroupsScreen currentUser={user} onBack={() => setScreen('home')} onBuzzGroup={handleBuzzGroup} />}
           {screen === 'group-buzz' && selectedGroup && <GroupBuzzSheet sender={user} group={selectedGroup} onClose={handleCloseGroup} />}
           {screen === 'voice-call' && selectedUser && <VoiceCallScreen caller={user} receiver={selectedUser} onClose={() => { setSelectedUser(null); setScreen('home'); }} />}

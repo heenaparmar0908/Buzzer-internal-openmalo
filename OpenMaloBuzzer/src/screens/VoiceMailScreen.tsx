@@ -437,7 +437,7 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0D0D0D'},
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12},
-  backBtn: {color: '#FF4D4D', fontSize: 16, fontWeight: '600'},
+  backBtn: {color: '#FF4D4D', fontSize: 20, fontWeight: '700'},
   selectBtn: {color: '#FF4D4D', fontSize: 14, fontWeight: '600'},
   selectBar: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10},
   selectAllBtn: {flexDirection: 'row', alignItems: 'center', gap: 8},

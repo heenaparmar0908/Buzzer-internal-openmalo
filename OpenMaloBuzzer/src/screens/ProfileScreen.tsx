@@ -356,8 +356,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
   },
-  backBtn: {color: '#FF4D4D', fontSize: 16, fontWeight: '600'},
-  headerTitle: {color: '#fff', fontSize: 20, fontWeight: '700'},
+  backBtn: {color: '#FF4D4D', fontSize: 20, fontWeight: '700'},
+  headerTitle: {color: '#fff', fontSize: 22, fontWeight: '700'},
   scroll: {flex: 1},
   avatarSection: {alignItems: 'center', paddingVertical: 24},
   avatar: {
@@ -371,10 +371,10 @@ const styles = StyleSheet.create({
     borderColor: '#FF4D4D',
     marginBottom: 12,
   },
-  avatarText: {color: '#FF4D4D', fontSize: 32, fontWeight: '800'},
+  avatarText: {color: '#FF4D4D', fontSize: 34, fontWeight: '800'},
   roleBadge: {
     color: '#FF4D4D',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     textTransform: 'uppercase',
     backgroundColor: '#2a1515',
@@ -386,17 +386,17 @@ const styles = StyleSheet.create({
   },
   section: {paddingHorizontal: 16, marginBottom: 24},
   sectionTitle: {
-    color: '#666',
-    fontSize: 12,
+    color: '#888',
+    fontSize: 14,
     fontWeight: '700',
     letterSpacing: 1,
     marginBottom: 12,
   },
-  label: {color: '#999', fontSize: 13, fontWeight: '600', marginBottom: 6},
+  label: {color: '#999', fontSize: 15, fontWeight: '600', marginBottom: 6},
   input: {
     backgroundColor: '#1A1A1A',
     color: '#fff',
-    fontSize: 16,
+    fontSize: 17,
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderRadius: 10,
@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   saveBtnDisabled: {opacity: 0.5},
-  saveBtnText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  saveBtnText: {color: '#fff', fontSize: 17, fontWeight: '700'},
   logoutRow: {
     backgroundColor: '#1A1A1A',
     paddingVertical: 16,
@@ -420,7 +420,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 10,
   },
-  logoutText: {color: '#FF4D4D', fontSize: 16, fontWeight: '600'},
+  logoutText: {color: '#FF4D4D', fontSize: 17, fontWeight: '600'},
   deleteRow: {
     backgroundColor: '#1A1A1A',
     paddingVertical: 16,
@@ -429,7 +429,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#F44336',
   },
-  deleteText: {color: '#F44336', fontSize: 16, fontWeight: '600'},
+  deleteText: {color: '#F44336', fontSize: 17, fontWeight: '600'},
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',
@@ -467,10 +467,10 @@ const styles = StyleSheet.create({
   },
   modalMessage: {
     color: '#888',
-    fontSize: 15,
+    fontSize: 16,
     textAlign: 'center',
     marginBottom: 24,
-    lineHeight: 22,
+    lineHeight: 24,
   },
   modalButtons: {flexDirection: 'row', gap: 12, width: '100%'},
   modalCancelBtn: {
@@ -482,7 +482,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
   },
-  modalCancelText: {color: '#ccc', fontSize: 16, fontWeight: '700'},
+  modalCancelText: {color: '#ccc', fontSize: 17, fontWeight: '700'},
   modalConfirmBtn: {
     flex: 1,
     backgroundColor: '#FF4D4D',
@@ -497,7 +497,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
   },
-  modalConfirmText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  modalConfirmText: {color: '#fff', fontSize: 17, fontWeight: '700'},
   modalIconSuccess: {backgroundColor: '#1a3a1a'},
   modalFullBtn: {
     width: '100%',

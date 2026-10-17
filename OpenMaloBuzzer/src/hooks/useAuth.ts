@@ -29,7 +29,7 @@ export const useAuth = () => {
   useEffect(() => {
     if (!user) return;
     updateLastSeen(user.id).catch(() => {});
-    const interval = setInterval(() => updateLastSeen(user.id).catch(() => {}), 60000);
+    const interval = setInterval(() => updateLastSeen(user.id).catch(() => {}), 15000);
     return () => clearInterval(interval);
   }, [user]);
 

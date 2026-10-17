@@ -36,7 +36,19 @@
       "Bash(firebase functions:list)",
       "Bash(firebase firestore:query users --project buzzer-5936f --filter 'phone == \"\"8140077953\"\"')",
       "Bash(lsof -ti:8081)",
-      "Bash(xargs kill:*)"
+      "Bash(xargs kill:*)",
+      "Bash(git push:*)",
+      "Bash(firebase --version)",
+      "Bash(firebase firestore:get users --project buzzer-5936f)",
+      "Bash(firebase emulators:exec --project buzzer-5936f 'echo test')",
+      "Bash(node:*)",
+      "Bash(npm root:*)",
+      "Bash(firebase firestore:export-ids users --project buzzer-5936f)",
+      "Bash(gcloud auth:*)",
+      "Bash(GCLOUD_PROJECT=buzzer-5936f FIREBASE_CONFIG='{\"\"projectId\"\":\"\"buzzer-5936f\"\"}' node -e \":*)",
+      "Read(//Users/admin/.config/firebase/**)",
+      "Bash(./gradlew installDebug)",
+      "Bash(firebase firestore:query users --project buzzer-5936f)"
     ]
   }
 }

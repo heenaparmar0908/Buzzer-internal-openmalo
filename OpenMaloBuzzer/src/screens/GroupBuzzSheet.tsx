@@ -4,7 +4,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import {User, Group, Buzz, BuzzResponse} from '../types';
 import {useReasons} from '../hooks/useReasons';
-import {createGroupBuzz, subscribeToBuzz, subscribeToUsers} from '../services/firebase';
+import {createGroupBuzz, subscribeToBuzz, subscribeToUsers, respondToBuzz} from '../services/firebase';
 import {MAX_NOTE_LENGTH} from '../constants';
 
 interface Props {
@@ -34,6 +34,7 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
   const [responses, setResponses] = useState<Record<string, BuzzResponse>>({});
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const unsubsRef = useRef<(() => void)[]>([]);
+  const buzzIdsRef = useRef<string[]>([]);
 
   const memberIds = group.member_ids.filter(id => id !== sender.id);
 
@@ -54,7 +55,8 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
     if (!reason) return;
 
     setSending(true);
-    const docs = await createGroupBuzz(sender.id, memberIds, reason, note.trim() || null);
+    const docs = await createGroupBuzz(sender.id, memberIds, reason, note.trim() || null, group.id, group.name);
+    buzzIdsRef.current = docs.map(d => d.id);
     Vibration.vibrate(200);
     setSending(false);
     setSent(true);
@@ -76,6 +78,18 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
     });
   };
 
+  const handleCancelAll = async () => {
+    unsubsRef.current.forEach(u => u());
+    unsubsRef.current = [];
+    for (const buzzId of buzzIdsRef.current) {
+      const memberId = memberIds[buzzIdsRef.current.indexOf(buzzId)];
+      if (memberId && responses[memberId] === 'none') {
+        await respondToBuzz(buzzId, 'cancelled');
+      }
+    }
+    onClose();
+  };
+
   const respondedCount = Object.values(responses).filter(r => r !== 'none').length;
   const allResponded = respondedCount === memberIds.length && memberIds.length > 0;
 
@@ -85,7 +99,7 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
         <View style={[styles.header, {paddingTop: insets.top + 12}]}>
           <View style={{width: 32}} />
           <Text style={styles.headerTitle}>{group.name}</Text>
-          <TouchableOpacity onPress={onClose}><Icon name="close" size={24} color="#888" /></TouchableOpacity>
+          <TouchableOpacity onPress={allResponded ? onClose : handleCancelAll}><Icon name="close" size={24} color="#888" /></TouchableOpacity>
         </View>
 
         <Text style={styles.statusSummary}>
@@ -114,9 +128,15 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
           })}
         </ScrollView>
 
-        <TouchableOpacity style={styles.doneButton} onPress={onClose}>
-          <Text style={styles.doneButtonText}>{allResponded ? 'Done' : 'Close'}</Text>
-        </TouchableOpacity>
+        {allResponded ? (
+          <TouchableOpacity style={styles.doneButton} onPress={onClose}>
+            <Text style={styles.doneButtonText}>Done</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={styles.endButton} onPress={handleCancelAll}>
+            <Text style={styles.endButtonText}>End</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   }
@@ -158,7 +178,6 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0D0D0D', paddingHorizontal: 20},
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 16},
-  closeBtn: {color: '#888', fontSize: 24, padding: 4},
   headerTitle: {color: '#fff', fontSize: 20, fontWeight: '700'},
   memberCount: {color: '#FF9800', fontSize: 14, fontWeight: '600', marginBottom: 16, textAlign: 'center'},
   label: {color: '#888', fontSize: 14, fontWeight: '600', marginBottom: 12, marginTop: 8},
@@ -168,7 +187,7 @@ const styles = StyleSheet.create({
   chipText: {color: '#ccc', fontSize: 15},
   chipTextSelected: {color: '#FF4D4D', fontWeight: '600'},
   noteInput: {backgroundColor: '#1A1A1A', color: '#fff', fontSize: 16, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 10, marginTop: 16, borderWidth: 1, borderColor: '#333'},
-  buzzButton: {backgroundColor: '#FF4D4D', paddingVertical: 20, borderRadius: 14, alignItems: 'center', marginTop: 24},
+  buzzButton: {backgroundColor: '#4CAF50', paddingVertical: 20, borderRadius: 14, alignItems: 'center', marginTop: 24},
   buzzButtonDisabled: {opacity: 0.4},
   buzzButtonText: {color: '#fff', fontSize: 22, fontWeight: '900', letterSpacing: 2},
   statusSummary: {color: '#888', fontSize: 14, fontWeight: '600', textAlign: 'center', marginBottom: 16},
@@ -179,10 +198,11 @@ const styles = StyleSheet.create({
   memberInfo: {flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   memberName: {color: '#fff', fontSize: 16, fontWeight: '600'},
   responseBadge: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, gap: 4},
-  responseIcon: {fontSize: 14, fontWeight: '700'},
   responseLabel: {fontSize: 13, fontWeight: '700'},
   doneButton: {backgroundColor: '#1A1A1A', paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginTop: 8},
   doneButtonText: {color: '#ccc', fontSize: 16, fontWeight: '600'},
+  endButton: {backgroundColor: '#F44336', paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginTop: 8},
+  endButtonText: {color: '#fff', fontSize: 18, fontWeight: '800'},
 });
 
 export default GroupBuzzSheet;
