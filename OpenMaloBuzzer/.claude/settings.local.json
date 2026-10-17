@@ -48,7 +48,9 @@
       "Bash(GCLOUD_PROJECT=buzzer-5936f FIREBASE_CONFIG='{\"\"projectId\"\":\"\"buzzer-5936f\"\"}' node -e \":*)",
       "Read(//Users/admin/.config/firebase/**)",
       "Bash(./gradlew installDebug)",
-      "Bash(firebase firestore:query users --project buzzer-5936f)"
+      "Bash(firebase firestore:query users --project buzzer-5936f)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
