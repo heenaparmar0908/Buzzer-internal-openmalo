@@ -141,8 +141,17 @@ function sha256(message: string): string {
 function generateSalt(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let salt = '';
-  for (let i = 0; i < 16; i++) {
-    salt += chars[Math.floor(Math.random() * chars.length)];
+  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
+    const randomBytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(randomBytes);
+    for (let i = 0; i < 16; i++) {
+      salt += chars[randomBytes[i] % chars.length];
+    }
+  } else {
+    // Fallback for older environments
+    for (let i = 0; i < 16; i++) {
+      salt += chars[Math.floor(Math.random() * chars.length)];
+    }
   }
   return salt;
 }

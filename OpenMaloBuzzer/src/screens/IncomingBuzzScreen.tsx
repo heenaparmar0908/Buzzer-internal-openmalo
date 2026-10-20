@@ -1,13 +1,9 @@
-import React, {useEffect, useRef} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, Vibration, NativeModules} from 'react-native';
+import React, {useEffect} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, NativeModules} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import Icon from 'react-native-vector-icons/MaterialIcons';
-import Sound from 'react-native-sound';
 import {BuzzPayload, BuzzResponse, Buzz} from '../types';
 import {respondToBuzz, subscribeToBuzz} from '../services/firebase';
 import {cancelBuzzNotification} from '../services/notification';
-
-Sound.setCategory('Playback');
 
 interface Props {
   payload: BuzzPayload;
@@ -16,17 +12,11 @@ interface Props {
 
 const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
   const insets = useSafeAreaInsets();
-  const soundRef = useRef<Sound | null>(null);
 
   // Listen for cancellation by sender
   useEffect(() => {
     const unsub = subscribeToBuzz(payload.buzz_id, (buzz: Buzz) => {
       if (buzz.response === 'cancelled') {
-        Vibration.cancel();
-        if (soundRef.current) {
-          soundRef.current.stop();
-          soundRef.current.release();
-        }
         NativeModules.BuzzerService?.stopAlarm();
         cancelBuzzNotification(payload.buzz_id);
         onDismiss();
@@ -36,35 +26,14 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
   }, [payload.buzz_id, onDismiss]);
 
   useEffect(() => {
-    // Play alarm sound
-    const sound = new Sound('buzz_alarm.wav', Sound.MAIN_BUNDLE, (err) => {
-      if (err) {
-        console.warn('Sound load error:', err);
-        return;
-      }
-      sound.setNumberOfLoops(-1); // loop until stopped
-      sound.setVolume(1.0);
-      sound.play();
-    });
-    soundRef.current = sound;
-
-    // Continuous vibration until response
-    const pattern = [0, 500, 200, 500, 200, 500, 200, 500];
-    Vibration.vibrate(pattern, true);
-
+    // Native BuzzerService handles alarm sound + vibration in all states.
+    // No JS alarm here to avoid double sound in foreground.
     return () => {
-      Vibration.cancel();
-      sound.stop();
-      sound.release();
+      NativeModules.BuzzerService?.stopAlarm();
     };
   }, []);
 
   const handleResponse = async (response: BuzzResponse) => {
-    Vibration.cancel();
-    if (soundRef.current) {
-      soundRef.current.stop();
-      soundRef.current.release();
-    }
     NativeModules.BuzzerService?.stopAlarm();
     await respondToBuzz(payload.buzz_id, response);
     await cancelBuzzNotification(payload.buzz_id);
@@ -116,9 +85,14 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: '#0D0D0D',
     justifyContent: 'space-between',
+    zIndex: 999,
   },
   content: {
     flex: 1,

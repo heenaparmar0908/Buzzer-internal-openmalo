@@ -5,6 +5,17 @@ import {hashPin, verifyPin} from './crypto';
 
 const AUTH_KEY = '@openmalo_user';
 
+/** Sign in with Firebase Anonymous Auth to get a valid auth token for Firestore rules. */
+const ensureFirebaseAuth = async () => {
+  try {
+    const {getAuth, signInAnonymously} = require('@react-native-firebase/auth');
+    const auth = getAuth();
+    if (!auth.currentUser) {
+      await signInAnonymously(auth);
+    }
+  } catch {}
+};
+
 /** Store user in AsyncStorage without sensitive fields. */
 const storeUser = async (user: User) => {
   const {pin_hash: _, ...safeUser} = user;
@@ -12,6 +23,7 @@ const storeUser = async (user: User) => {
 };
 
 export const login = async (phone: string, pin: string): Promise<User | null> => {
+  await ensureFirebaseAuth();
   const user = await getUserByPhone(phone);
   if (!user) throw new Error('No account found with this phone number');
   if (!verifyPin(pin, user.pin_hash)) throw new Error('Incorrect PIN');
@@ -43,6 +55,7 @@ export const signup = async (
   pin: string,
   role: 'manager' | 'member' = 'member',
 ): Promise<User> => {
+  await ensureFirebaseAuth();
   const existing = await getUserByPhone(phone);
   if (existing) throw new Error('Phone number already registered');
 
@@ -79,6 +92,7 @@ export const deleteAccount = async (userId: string): Promise<void> => {
 export const getStoredUser = async (): Promise<User | null> => {
   const data = await AsyncStorage.getItem(AUTH_KEY);
   if (!data) return null;
+  await ensureFirebaseAuth();
   const parsed = JSON.parse(data);
   // pin_hash is not stored locally; default to empty
   return {...parsed, pin_hash: parsed.pin_hash || ''};
@@ -86,6 +100,10 @@ export const getStoredUser = async (): Promise<User | null> => {
 
 export const logout = async () => {
   await AsyncStorage.removeItem(AUTH_KEY);
+  try {
+    const {getAuth, signOut} = require('@react-native-firebase/auth');
+    await signOut(getAuth());
+  } catch {}
 };
 
 export const updateProfile = async (
@@ -121,6 +139,7 @@ export const resetForgottenPin = async (
   phone: string,
   newPin: string,
 ): Promise<void> => {
+  await ensureFirebaseAuth();
   const user = await getUserByPhone(phone);
   if (!user) throw new Error('No account found with this phone number');
   const newHash = hashPin(newPin);

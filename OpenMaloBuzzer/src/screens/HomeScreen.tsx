@@ -11,13 +11,22 @@ import {
   Modal,
   Dimensions,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import Sound from 'react-native-sound';
 import {User, Group, Buzz, VoiceMail} from '../types';
 import {useUsers} from '../hooks/useUsers';
 import {useGroups} from '../hooks/useGroups';
-import {getRecentBuzzes, subscribeToVoiceMails, subscribeToMissedBuzzes, markVoiceMailListened, subscribeToUsers} from '../services/firebase';
+import {useReasons} from '../hooks/useReasons';
+import {subscribeToVoiceMails, subscribeToMissedBuzzes, markVoiceMailListened, subscribeToUsers} from '../services/firebase';
+
+const getFavoritesKey = (userId: string) => `@openmalo_favorites_${userId}`;
+
+interface FavoriteEntry {
+  userId: string;
+  reasons: string[];
+}
 
 interface Props {
   currentUser: User;
@@ -36,8 +45,8 @@ interface Props {
 const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, onEditBuzz, onCallUser, onVoiceMail, onSettings, onProfile, onHistory, onGroups, onBuzzGroup}) => {
   const {users, isOnline, loading} = useUsers(currentUser.id);
   const {groups} = useGroups();
-  const [recentBuzzes, setRecentBuzzes] = useState<Buzz[]>([]);
-  const [recentGroups, setRecentGroups] = useState<{groupId: string; groupName: string; reason: string; memberCount: number}[]>([]);
+  const reasons = useReasons();
+  const [favorites, setFavorites] = useState<FavoriteEntry[]>([]);
   const [unreadVoiceCount, setUnreadVoiceCount] = useState(0);
   const [missedBuzzes, setMissedBuzzes] = useState<Buzz[]>([]);
   const [infoGroup, setInfoGroup] = useState<Group | null>(null);
@@ -50,6 +59,28 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
   const pagerRef = useRef<ScrollView>(null);
   const screenWidth = Dimensions.get('window').width;
   const TABS: ('recent' | 'people' | 'groups' | 'voice')[] = ['recent', 'people', 'groups', 'voice'];
+
+  // Add modal state
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addStep, setAddStep] = useState<'person' | 'reasons'>('person');
+  const [addSelectedUser, setAddSelectedUser] = useState<User | null>(null);
+  const [addSelectedReasons, setAddSelectedReasons] = useState<Set<string>>(new Set());
+  const [addCustomReason, setAddCustomReason] = useState('');
+  const [deleteModal, setDeleteModal] = useState<string | null>(null);
+  const reasonsScrollRef = useRef<ScrollView>(null);
+
+  // Load favorites from AsyncStorage (per-user)
+  useEffect(() => {
+    setFavorites([]);
+    AsyncStorage.getItem(getFavoritesKey(currentUser.id)).then(data => {
+      if (data) setFavorites(JSON.parse(data));
+    }).catch(() => {});
+  }, [currentUser.id]);
+
+  const saveFavorites = async (updated: FavoriteEntry[]) => {
+    setFavorites(updated);
+    await AsyncStorage.setItem(getFavoritesKey(currentUser.id), JSON.stringify(updated)).catch(() => {});
+  };
 
   const scrollToTab = useCallback((tab: 'recent' | 'people' | 'groups' | 'voice') => {
     const index = TABS.indexOf(tab);
@@ -69,43 +100,6 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
     if (currentUser.role === 'owner' || currentUser.role === 'manager') return true;
     return target.role === 'owner' || target.role === 'manager';
   };
-
-  useEffect(() => {
-    getRecentBuzzes(currentUser.id, 50)
-      .then(buzzes => {
-        // Separate group buzzes and individual buzzes
-        const seenGroups = new Set<string>();
-        const groupEntries: {groupId: string; groupName: string; reason: string; memberCount: number}[] = [];
-        const seen = new Set<string>();
-        const recent: Buzz[] = [];
-
-        for (const b of buzzes) {
-          if (b.response === 'cancelled') continue;
-
-          // Group buzz
-          if (b.group_id) {
-            const gKey = `${b.group_id}_${b.reason}`;
-            if (!seenGroups.has(gKey)) {
-              seenGroups.add(gKey);
-              const count = buzzes.filter(x => x.group_id === b.group_id && x.reason === b.reason && x.response !== 'cancelled').length;
-              groupEntries.push({groupId: b.group_id, groupName: b.group_name || 'Group', reason: b.reason, memberCount: count});
-            }
-            continue;
-          }
-
-          // Individual buzz
-          const key = `${b.to_user_id}_${b.reason}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            recent.push(b);
-          }
-        }
-        recent.splice(10);
-        setRecentBuzzes(recent);
-        setRecentGroups(groupEntries);
-      })
-      .catch(() => {});
-  }, [currentUser.id]);
 
   useEffect(() => {
     const unsub = subscribeToVoiceMails(currentUser.id, mails => {
@@ -165,11 +159,6 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
   const getGroupMissedCount = (group: Group) =>
     missedBuzzes.filter(b => group.member_ids.includes(b.from_user_id)).length;
 
-  const getUserName = (id: string) => {
-    const u = users.find(u => u.id === id);
-    return u?.name || '?';
-  };
-
   const buzzableUsers = users.filter(u => {
     if (!canBuzz(u)) return false;
     if (search.trim()) {
@@ -182,6 +171,56 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
   const myGroups = groups.filter(g =>
     g.created_by === currentUser.id || g.member_ids.includes(currentUser.id),
   );
+
+  // ─── Add Modal Handlers ───
+  const openAddModal = () => {
+    setAddStep('person');
+    setAddSelectedUser(null);
+    setAddSelectedReasons(new Set());
+    setAddCustomReason('');
+    setShowAddModal(true);
+  };
+
+  const selectPerson = (u: User) => {
+    setAddSelectedUser(u);
+    // Pre-select reasons if already exists
+    const existing = favorites.find(f => f.userId === u.id);
+    setAddSelectedReasons(new Set(existing?.reasons || []));
+    setAddStep('reasons');
+  };
+
+  const toggleReason = (label: string) => {
+    setAddSelectedReasons(prev => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  };
+
+  const addCustom = () => {
+    const trimmed = addCustomReason.trim();
+    if (!trimmed) return;
+    setAddSelectedReasons(prev => new Set(prev).add(trimmed));
+    setAddCustomReason('');
+    setTimeout(() => reasonsScrollRef.current?.scrollTo({y: 0, animated: true}), 100);
+  };
+
+  const saveEntry = () => {
+    if (!addSelectedUser || addSelectedReasons.size === 0) return;
+    const updated = favorites.filter(f => f.userId !== addSelectedUser.id);
+    updated.push({userId: addSelectedUser.id, reasons: Array.from(addSelectedReasons)});
+    saveFavorites(updated);
+    setShowAddModal(false);
+  };
+
+  const deleteEntry = (userId: string) => {
+    const updated = favorites.filter(f => f.userId !== userId);
+    saveFavorites(updated);
+    setDeleteModal(null);
+  };
+
+  const availableForAdd = users.filter(u => canBuzz(u));
 
   const renderUser = ({item}: {item: User}) => {
     const online = isOnline(item);
@@ -275,52 +314,54 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
         scrollEventThrottle={16}
         style={{flex: 1}}>
 
-        {/* Recent Tab */}
-        <ScrollView style={{width: screenWidth}} contentContainerStyle={{paddingBottom: insets.bottom + 20}} showsVerticalScrollIndicator={false} nestedScrollEnabled>
-          {recentGroups.length > 0 && recentGroups.map(rg => {
-            const group = groups.find(g => g.id === rg.groupId);
+        {/* Recent Tab — Custom Favorites */}
+        <ScrollView style={{width: screenWidth}} contentContainerStyle={{paddingBottom: insets.bottom + 20, paddingHorizontal: 12}} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+          <TouchableOpacity style={styles.addFavBtn} onPress={openAddModal} activeOpacity={0.7}>
+            <Icon name="add-circle" size={22} color="#64B5F6" />
+            <Text style={styles.addFavBtnText}>Add Person</Text>
+          </TouchableOpacity>
+
+          {favorites.length > 0 ? favorites.map(fav => {
+            const targetUser = users.find(u => u.id === fav.userId);
+            const name = targetUser?.name || usersMap[fav.userId] || '?';
             return (
-              <View key={`grp_${rg.groupId}_${rg.reason}`} style={styles.recentRow}>
-                <View style={styles.recentGroupAvatar}>
-                  <Icon name="group" size={22} color="#ccc" />
-                </View>
-                <View style={styles.recentInfo}>
-                  <Text style={styles.recentName}>{rg.groupName}</Text>
-                  <Text style={styles.recentReason} numberOfLines={1}>{rg.reason} · {rg.memberCount} members</Text>
-                </View>
-                {group && (
-                  <TouchableOpacity style={styles.buzzBtn} onPress={() => onBuzzGroup(group)}>
-                    <Text style={styles.buzzBtnText}>Buzz</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            );
-          })}
-          {recentBuzzes.length > 0 ? (
-            recentBuzzes.map(b => {
-              const targetUser = users.find(u => u.id === b.to_user_id);
-              const name = getUserName(b.to_user_id);
-              return (
-                <View key={b.id} style={styles.recentRow}>
-                  <TouchableOpacity style={styles.recentEditBtn} onPress={() => targetUser && onEditBuzz(targetUser, b.reason)}>
-                    <Icon name="edit" size={18} color="#64B5F6" />
-                  </TouchableOpacity>
-                  <View style={[styles.recentAvatar, targetUser && isOnline(targetUser) && styles.avatarOnline]}>
+              <View key={fav.userId} style={styles.recentCard}>
+                <View style={styles.recentCardHeader}>
+                  <View style={styles.recentAvatar}>
                     <Text style={styles.recentAvatarText}>{name.charAt(0).toUpperCase()}</Text>
                   </View>
-                  <View style={styles.recentInfo}>
-                    <Text style={styles.recentName}>{name}</Text>
-                    <Text style={styles.recentReason} numberOfLines={1}>{b.reason}</Text>
-                  </View>
-                  <TouchableOpacity style={styles.buzzBtn} onPress={() => targetUser && onBuzzAgain(targetUser, b.reason)}>
-                    <Text style={styles.buzzBtnText}>Buzz</Text>
+                  <Text style={styles.recentCardName}>{name}</Text>
+                  <TouchableOpacity style={styles.recentIconBtn} onPress={() => {
+                    if (!targetUser) return;
+                    setAddSelectedUser(targetUser);
+                    setAddSelectedReasons(new Set(fav.reasons));
+                    setAddStep('reasons');
+                    setAddCustomReason('');
+                    setShowAddModal(true);
+                  }}>
+                    <Icon name="edit" size={18} color={targetUser ? '#64B5F6' : '#444'} />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.recentIconBtn} onPress={() => setDeleteModal(fav.userId)}>
+                    <Icon name="close" size={18} color="#666" />
                   </TouchableOpacity>
                 </View>
-              );
-            })
-          ) : recentGroups.length === 0 ? (
-            <View style={styles.center}><Text style={styles.emptyText}>No recent buzzes</Text></View>
-          ) : null}
+                {fav.reasons.map(reason => (
+                  <View key={reason} style={styles.recentReasonRow}>
+                    <Text style={styles.recentReasonText} numberOfLines={1}>{reason}</Text>
+                    {targetUser ? (
+                      <TouchableOpacity style={styles.recentBuzzBtn} onPress={() => onBuzzAgain(targetUser, reason)} activeOpacity={0.7}>
+                        <Text style={styles.recentBuzzBtnText}>Buzz</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <Text style={styles.recentUnavailableText}>Unavailable</Text>
+                    )}
+                  </View>
+                ))}
+              </View>
+            );
+          }) : (
+            <View style={styles.center}><Text style={styles.emptyText}>Tap + to add people and reasons</Text></View>
+          )}
         </ScrollView>
 
         {/* People Tab */}
@@ -420,6 +461,8 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
         </ScrollView>
 
       </ScrollView>
+
+      {/* Group Info Modal */}
       <Modal visible={!!infoGroup} transparent animationType="fade" onRequestClose={() => setInfoGroup(null)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
@@ -449,6 +492,117 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
           </View>
         </View>
       </Modal>
+
+      {/* Add Person Modal */}
+      <Modal visible={showAddModal} transparent animationType="slide" onRequestClose={() => setShowAddModal(false)}>
+        <View style={styles.addModalOverlay}>
+          <View style={[styles.addModalSheet, {paddingBottom: insets.bottom + 16}]}>
+            <View style={styles.addModalHeader}>
+              <TouchableOpacity onPress={() => {
+                if (addStep === 'reasons') { setAddStep('person'); return; }
+                setShowAddModal(false);
+              }}>
+                <Text style={styles.addModalBack}>{addStep === 'reasons' ? '← Back' : 'Cancel'}</Text>
+              </TouchableOpacity>
+              <Text style={styles.addModalTitle}>{addStep === 'person' ? 'Select Person' : 'Select Reasons'}</Text>
+              <View style={{width: 60}} />
+            </View>
+
+            {addStep === 'person' ? (
+              <ScrollView>
+                {availableForAdd.length > 0 ? availableForAdd.map(u => (
+                  <TouchableOpacity key={u.id} style={styles.addPersonRow} onPress={() => selectPerson(u)} activeOpacity={0.7}>
+                    <View style={styles.addPersonAvatar}>
+                      <Text style={styles.addPersonAvatarText}>{u.name.charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <View style={{flex: 1}}>
+                      <Text style={styles.addPersonName}>{u.name}</Text>
+                      <Text style={styles.addPersonRole}>{u.role}</Text>
+                    </View>
+                    {favorites.some(f => f.userId === u.id) && (
+                      <Icon name="check-circle" size={20} color="#4CAF50" />
+                    )}
+                  </TouchableOpacity>
+                )) : (
+                  <View style={styles.center}><Text style={styles.emptyText}>No people available to buzz</Text></View>
+                )}
+              </ScrollView>
+            ) : (
+              <View style={{flex: 1}}>
+                <Text style={styles.addReasonLabel}>Add reasons for {addSelectedUser?.name}</Text>
+
+                {/* Custom reason input — prominent at top */}
+                <View style={styles.addCustomRow}>
+                  <TextInput
+                    style={styles.addCustomInput}
+                    placeholder="Type a reason and tap +"
+                    placeholderTextColor="#666"
+                    value={addCustomReason}
+                    onChangeText={setAddCustomReason}
+                    maxLength={50}
+                    returnKeyType="done"
+                    onSubmitEditing={addCustom}
+                    autoFocus
+                  />
+                  <TouchableOpacity style={[styles.addCustomBtn, !addCustomReason.trim() && {opacity: 0.3}]} onPress={addCustom} disabled={!addCustomReason.trim()}>
+                    <Icon name="add" size={22} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Pre-configured reasons from Settings */}
+                {reasons.length > 0 && (
+                  <Text style={styles.addReasonSectionLabel}>Or select from list</Text>
+                )}
+
+                <ScrollView ref={reasonsScrollRef} style={{flex: 1}}>
+                  {/* Custom reasons at top */}
+                  {Array.from(addSelectedReasons).filter(r => !reasons.some(x => x.label === r)).map(r => (
+                    <TouchableOpacity key={r} style={[styles.addReasonRow, styles.addReasonRowActive]} onPress={() => toggleReason(r)} activeOpacity={0.7}>
+                      <Text style={[styles.addReasonText, styles.addReasonTextActive]}>{r}</Text>
+                      <Icon name="check" size={18} color="#FF4D4D" />
+                    </TouchableOpacity>
+                  ))}
+                  {/* Pre-configured reasons */}
+                  {reasons.map(r => {
+                    const selected = addSelectedReasons.has(r.label);
+                    return (
+                      <TouchableOpacity key={r.id} style={[styles.addReasonRow, selected && styles.addReasonRowActive]} onPress={() => toggleReason(r.label)} activeOpacity={0.7}>
+                        <Text style={[styles.addReasonText, selected && styles.addReasonTextActive]}>{r.label}</Text>
+                        {selected && <Icon name="check" size={18} color="#FF4D4D" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                <TouchableOpacity
+                  style={[styles.addSaveBtn, addSelectedReasons.size === 0 && {opacity: 0.4}]}
+                  onPress={saveEntry}
+                  disabled={addSelectedReasons.size === 0}>
+                  <Text style={styles.addSaveBtnText}>Save ({addSelectedReasons.size} reason{addSelectedReasons.size !== 1 ? 's' : ''})</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete Confirm Modal */}
+      <Modal visible={!!deleteModal} transparent animationType="fade" onRequestClose={() => setDeleteModal(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <Text style={styles.deleteModalTitle}>Remove</Text>
+            <Text style={styles.deleteModalMsg}>Remove this person from your list?</Text>
+            <View style={styles.deleteModalBtns}>
+              <TouchableOpacity style={styles.deleteModalCancel} onPress={() => setDeleteModal(null)}>
+                <Text style={styles.deleteModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.deleteModalConfirm} onPress={() => deleteModal && deleteEntry(deleteModal)}>
+                <Text style={styles.deleteModalConfirmText}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -475,6 +629,23 @@ const styles = StyleSheet.create({
   searchBar: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', marginHorizontal: 16, borderRadius: 10, paddingHorizontal: 12, height: 42, gap: 8, marginBottom: 12},
   searchInput: {flex: 1, color: '#fff', fontSize: 15, padding: 0},
 
+  // Recent tab
+  addFavBtn: {flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4, marginBottom: 12, padding: 14, backgroundColor: '#1A1A1A', borderRadius: 12, borderWidth: 1, borderColor: '#333', borderStyle: 'dashed'},
+  addFavBtnText: {color: '#64B5F6', fontSize: 16, fontWeight: '700'},
+
+  recentCard: {backgroundColor: '#1A1A1A', borderRadius: 14, marginBottom: 10, padding: 14, borderWidth: 1, borderColor: '#252525'},
+  recentCardHeader: {flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4},
+  recentCardName: {color: '#fff', fontSize: 16, fontWeight: '700', flex: 1},
+  recentIconBtn: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center'},
+  recentReasonRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 4, borderTopWidth: 1, borderTopColor: '#252525'},
+  recentReasonText: {color: '#ccc', fontSize: 14, fontWeight: '500', flex: 1},
+  recentBuzzBtn: {paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6, backgroundColor: '#1a3a1a'},
+  recentBuzzBtnText: {color: '#4CAF50', fontSize: 13, fontWeight: '700'},
+  recentUnavailableText: {color: '#555', fontSize: 12, fontWeight: '600'},
+  recentAvatar: {width: 38, height: 38, borderRadius: 19, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center'},
+  recentAvatarText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+
+  // Groups
   groupRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10},
   groupRowLeft: {flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1},
   groupAvatar: {width: 42, height: 42, borderRadius: 21, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center'},
@@ -482,15 +653,7 @@ const styles = StyleSheet.create({
   groupRowName: {color: '#fff', fontSize: 16, fontWeight: '600'},
   groupRowCount: {color: '#999', fontSize: 13, marginTop: 1},
 
-  recentRow: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1A1A1A'},
-  recentEditBtn: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#1a2a3a', alignItems: 'center', justifyContent: 'center', marginRight: 10},
-  recentAvatar: {width: 44, height: 44, borderRadius: 22, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12},
-  recentAvatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
-  recentGroupAvatar: {width: 44, height: 44, borderRadius: 22, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12},
-  recentInfo: {flex: 1},
-  recentName: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  recentReason: {color: '#FF4D4D', fontSize: 14, fontWeight: '600', marginTop: 2},
-
+  // People
   userRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10},
   userLeft: {flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1},
   avatar: {width: 44, height: 44, borderRadius: 22, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', position: 'relative'},
@@ -515,6 +678,7 @@ const styles = StyleSheet.create({
   createGroupBtn: {flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginHorizontal: 16, marginTop: 8, marginBottom: 12, padding: 14, backgroundColor: '#1A1A1A', borderRadius: 12, borderWidth: 1, borderColor: '#333', borderStyle: 'dashed'},
   createGroupBtnText: {color: '#64B5F6', fontSize: 16, fontWeight: '700'},
 
+  // Modals
   modalOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32},
   modalBox: {backgroundColor: '#1A1A1A', borderRadius: 20, padding: 20, width: '100%', maxHeight: '60%', borderWidth: 1, borderColor: '#333'},
   modalHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4},
@@ -528,6 +692,7 @@ const styles = StyleSheet.create({
   memberName: {color: '#fff', fontSize: 15, fontWeight: '600'},
   memberRole: {color: '#999', fontSize: 13, textTransform: 'capitalize'},
 
+  // Voice
   voiceRow: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1A1A1A'},
   voiceRowUnread: {borderLeftWidth: 3, borderLeftColor: '#FF4D4D'},
   voiceAvatar: {width: 44, height: 44, borderRadius: 22, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12},
@@ -538,6 +703,39 @@ const styles = StyleSheet.create({
   voicePlayBtn: {width: 36, height: 36, borderRadius: 18, backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center'},
   voicePlayBtnActive: {backgroundColor: '#FF4D4D'},
   voiceUnreadDot: {width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF4D4D', position: 'absolute', top: 10, right: 10},
+
+  // Add Modal
+  addModalOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end'},
+  addModalSheet: {backgroundColor: '#1A1A1A', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 16, paddingHorizontal: 20, minHeight: '60%', maxHeight: '85%'},
+  addModalHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16},
+  addModalBack: {color: '#FF4D4D', fontSize: 16, fontWeight: '600'},
+  addModalTitle: {color: '#fff', fontSize: 18, fontWeight: '800'},
+  addPersonRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#252525'},
+  addPersonAvatar: {width: 40, height: 40, borderRadius: 20, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12},
+  addPersonAvatarText: {color: '#fff', fontSize: 17, fontWeight: '700'},
+  addPersonName: {color: '#fff', fontSize: 16, fontWeight: '600'},
+  addPersonRole: {color: '#999', fontSize: 13, textTransform: 'capitalize'},
+  addReasonLabel: {color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 14},
+  addReasonSectionLabel: {color: '#666', fontSize: 12, fontWeight: '700', letterSpacing: 1, marginTop: 16, marginBottom: 8},
+  addReasonRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 14, backgroundColor: '#252525', borderRadius: 10, marginBottom: 6},
+  addReasonRowActive: {backgroundColor: '#2a1515', borderWidth: 1, borderColor: '#FF4D4D'},
+  addReasonText: {color: '#ccc', fontSize: 15},
+  addReasonTextActive: {color: '#FF4D4D', fontWeight: '600'},
+  addCustomRow: {flexDirection: 'row', gap: 10, marginBottom: 12},
+  addCustomInput: {flex: 1, backgroundColor: '#252525', color: '#fff', fontSize: 16, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, borderWidth: 1, borderColor: '#444'},
+  addCustomBtn: {backgroundColor: '#FF4D4D', width: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center'},
+  addSaveBtn: {backgroundColor: '#4CAF50', paddingVertical: 14, borderRadius: 12, alignItems: 'center'},
+  addSaveBtnText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+
+  // Delete Modal
+  deleteModalBox: {backgroundColor: '#1A1A1A', borderRadius: 20, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#333'},
+  deleteModalTitle: {color: '#fff', fontSize: 20, fontWeight: '800', marginBottom: 8},
+  deleteModalMsg: {color: '#888', fontSize: 15, textAlign: 'center', marginBottom: 24},
+  deleteModalBtns: {flexDirection: 'row', gap: 12, width: '100%'},
+  deleteModalCancel: {flex: 1, backgroundColor: '#252525', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#333'},
+  deleteModalCancelText: {color: '#ccc', fontSize: 16, fontWeight: '700'},
+  deleteModalConfirm: {flex: 1, backgroundColor: '#F44336', paddingVertical: 14, borderRadius: 12, alignItems: 'center'},
+  deleteModalConfirmText: {color: '#fff', fontSize: 16, fontWeight: '700'},
 
   center: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60},
   emptyText: {color: '#999', fontSize: 16},

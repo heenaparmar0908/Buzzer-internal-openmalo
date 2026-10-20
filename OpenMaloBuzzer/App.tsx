@@ -4,7 +4,7 @@ import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {useAuth} from './src/hooks/useAuth';
 import {createNotificationChannel, setupNotificationListeners, cancelBuzzNotification} from './src/services/notification';
 import {respondToBuzz, subscribeToIncomingBuzzes, subscribeToUsers, requestFcmPermission} from './src/services/firebase';
-import {promptBatteryOptimization} from './src/services/batteryOptimization';
+import {promptBatteryOptimization, promptDndAccess} from './src/services/batteryOptimization';
 import {BuzzPayload, User, Group} from './src/types';
 
 import LoginScreen from './src/screens/LoginScreen';
@@ -22,7 +22,7 @@ import VoiceMailScreen from './src/screens/VoiceMailScreen';
 
 const {BuzzerService} = NativeModules;
 
-type Screen = 'home' | 'buzz' | 'incoming' | 'settings' | 'profile' | 'history' | 'groups' | 'group-buzz' | 'voice-call' | 'voice-mail';
+type Screen = 'home' | 'buzz' | 'settings' | 'profile' | 'history' | 'groups' | 'group-buzz' | 'voice-call' | 'voice-mail';
 
 function App() {
   const {user, loading, login, signUp, deleteAccount, updateProfile, changePin, logout} = useAuth();
@@ -33,6 +33,7 @@ function App() {
   const [incomingPayload, setIncomingPayload] = useState<BuzzPayload | null>(null);
   const [initialReason, setInitialReason] = useState<string | undefined>(undefined);
   const [autoSend, setAutoSend] = useState(false);
+  const [pendingChecked, setPendingChecked] = useState(false);
   const usersMapRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -46,12 +47,13 @@ function App() {
       await createNotificationChannel();
     };
     requestPermissions().catch(() => {});
-    promptBatteryOptimization();
   }, []);
 
   useEffect(() => {
     if (user) {
       BuzzerService?.startService(user.id);
+      promptBatteryOptimization();
+      setTimeout(() => promptDndAccess(), 2000);
       const sub = AppState.addEventListener('change', (state) => {
         if (state === 'active') BuzzerService?.startService(user.id);
       });
@@ -85,7 +87,6 @@ function App() {
             note: buzz.note,
           };
           setIncomingPayload(payload);
-          setScreen('incoming');
         }
         // Background/killed notifications are handled by FCM setBackgroundMessageHandler
       },
@@ -93,10 +94,6 @@ function App() {
         cancelBuzzNotification(buzzId).catch(() => {});
         setIncomingPayload(prev => {
           if (prev?.buzz_id === buzzId) return null;
-          return prev;
-        });
-        setScreen(prev => {
-          if (prev === 'incoming') return 'home';
           return prev;
         });
       },
@@ -117,10 +114,6 @@ function App() {
             if (prev?.buzz_id === data.buzz_id) return null;
             return prev;
           });
-          setScreen(prev => {
-            if (prev === 'incoming') return 'home';
-            return prev;
-          });
         }
         // Voice message notifications handled by native BuzzerService
       });
@@ -133,7 +126,7 @@ function App() {
   useEffect(() => {
     const unsubscribe = setupNotificationListeners(
       (buzzId, response) => { respondToBuzz(buzzId, response as any).catch(() => {}); },
-      payload => { setIncomingPayload(payload); setScreen('incoming'); },
+      payload => { setIncomingPayload(payload); },
     );
     return unsubscribe;
   }, []);
@@ -169,9 +162,9 @@ function App() {
             reason: data.reason,
             note: data.note || null,
           });
-          setScreen('incoming');
         }
       } catch {}
+      setPendingChecked(true);
     };
     checkPending();
     const sub = AppState.addEventListener('change', (state) => {
@@ -204,7 +197,7 @@ function App() {
   const handleBuzzAgain = useCallback((u: User, reason: string) => { setAutoSend(true); setInitialReason(reason); setSelectedUser(u); setScreen('buzz'); }, []);
   const handleEditBuzz = useCallback((u: User, reason: string) => { setAutoSend(false); setInitialReason(reason); setSelectedUser(u); setScreen('buzz'); }, []);
   const handleCloseBuzz = useCallback(() => { setSelectedUser(null); setInitialReason(undefined); setAutoSend(false); setScreen('home'); }, []);
-  const handleDismissIncoming = useCallback(() => { setIncomingPayload(null); setScreen('home'); }, []);
+  const handleDismissIncoming = useCallback(() => { setIncomingPayload(null); }, []);
   const handleCallUser = useCallback((u: User) => { setSelectedUser(u); setScreen('voice-call'); }, []);
   const handleVoiceMail = useCallback((u?: User) => { setSelectedUser(u || null); setScreen('voice-mail'); }, []);
   const handleBuzzGroup = useCallback((g: Group) => { setSelectedGroup(g); setScreen('group-buzz'); }, []);
@@ -213,7 +206,7 @@ function App() {
   return (
     <SafeAreaProvider>
       <StatusBar barStyle="light-content" backgroundColor="#0D0D0D" />
-      {loading ? (
+      {loading || (user && !pendingChecked) ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#FF4D4D" />
         </View>
@@ -225,7 +218,6 @@ function App() {
         )
       ) : (
         <>
-          {screen === 'incoming' && incomingPayload && <IncomingBuzzScreen payload={incomingPayload} onDismiss={handleDismissIncoming} />}
           {screen === 'home' && (
             <HomeScreen
               currentUser={user}
@@ -249,6 +241,9 @@ function App() {
           {screen === 'settings' && <SettingsScreen currentUser={user} onBack={() => setScreen('home')} />}
           {screen === 'profile' && <ProfileScreen currentUser={user} onBack={() => setScreen('home')} onLogout={handleLogout} onDeleteAccount={handleDeleteAccount} onUpdateProfile={updateProfile} onChangePin={changePin} />}
           {screen === 'history' && <HistoryScreen currentUser={user} onBack={() => setScreen('home')} />}
+
+          {/* Incoming buzz overlay — renders on TOP of any screen without unmounting it */}
+          {incomingPayload && <IncomingBuzzScreen payload={incomingPayload} onDismiss={handleDismissIncoming} />}
         </>
       )}
     </SafeAreaProvider>

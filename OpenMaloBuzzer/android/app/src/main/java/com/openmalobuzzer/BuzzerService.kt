@@ -4,6 +4,7 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -40,6 +41,7 @@ class BuzzerService : Service() {
         const val PREFS_NAME = "buzzer_prefs"
         const val PREF_USER_ID = "active_user_id"
         const val POLL_INTERVAL_MS = 15000L
+        const val LISTENER_REFRESH_MS = 300000L // 5 minutes — re-establish Firestore listeners
     }
 
     private var buzzListener: ListenerRegistration? = null
@@ -50,6 +52,9 @@ class BuzzerService : Service() {
     private var mediaPlayer: MediaPlayer? = null
     private var vibrator: Vibrator? = null
     private var isAlarming = false
+    private var originalAlarmVolume: Int = -1
+    private var originalRingerMode: Int = -1
+    private var originalDndMode: Int = -1
     private var activeBuzzId: String? = null
     private val seenBuzzIds = mutableSetOf<String>()
     private val handler = Handler(Looper.getMainLooper())
@@ -61,6 +66,16 @@ class BuzzerService : Service() {
                 pollForBuzzes(userId)
             }
             handler.postDelayed(this, POLL_INTERVAL_MS)
+        }
+    }
+
+    private val listenerRefreshRunnable = object : Runnable {
+        override fun run() {
+            currentUserId?.let { userId ->
+                Log.d(TAG, "Periodic listener refresh for userId: $userId")
+                startListening(userId)
+            }
+            handler.postDelayed(this, LISTENER_REFRESH_MS)
         }
     }
 
@@ -346,10 +361,13 @@ class BuzzerService : Service() {
     private fun startPolling() {
         handler.removeCallbacks(pollRunnable)
         handler.postDelayed(pollRunnable, POLL_INTERVAL_MS)
+        handler.removeCallbacks(listenerRefreshRunnable)
+        handler.postDelayed(listenerRefreshRunnable, LISTENER_REFRESH_MS)
     }
 
     private fun stopPolling() {
         handler.removeCallbacks(pollRunnable)
+        handler.removeCallbacks(listenerRefreshRunnable)
     }
 
     private fun showCancelledNotification(buzzId: String, fromUserId: String) {
@@ -386,6 +404,37 @@ class BuzzerService : Service() {
     private fun startAlarm() {
         if (isAlarming) return
         isAlarming = true
+
+        // Disable DND temporarily so alarm is not blocked
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            if (nm.isNotificationPolicyAccessGranted) {
+                originalDndMode = nm.currentInterruptionFilter
+                if (originalDndMode != NotificationManager.INTERRUPTION_FILTER_ALL) {
+                    nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+                    Log.d(TAG, "DND disabled temporarily for buzz alarm")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to disable DND: ${e.message}")
+        }
+
+        // Force alarm volume to max
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            originalAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0)
+
+            // Also force ringer mode to normal so vibration + sound both work
+            originalRingerMode = audioManager.ringerMode
+            if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
+                audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set alarm volume: ${e.message}")
+        }
+
         val pattern = longArrayOf(0, 500, 200, 500, 200, 500, 200, 500)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
@@ -421,6 +470,31 @@ class BuzzerService : Service() {
             try { it.release() } catch (_: Exception) {}
         }
         mediaPlayer = null
+
+        // Restore original alarm volume and ringer mode
+        if (originalAlarmVolume >= 0) {
+            try {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                audioManager.setStreamVolume(AudioManager.STREAM_ALARM, originalAlarmVolume, 0)
+                if (originalRingerMode >= 0) {
+                    audioManager.ringerMode = originalRingerMode
+                }
+            } catch (_: Exception) {}
+            originalAlarmVolume = -1
+            originalRingerMode = -1
+        }
+
+        // Restore original DND mode
+        if (originalDndMode >= 0) {
+            try {
+                val nm = getSystemService(NotificationManager::class.java)
+                if (nm.isNotificationPolicyAccessGranted && originalDndMode != NotificationManager.INTERRUPTION_FILTER_ALL) {
+                    nm.setInterruptionFilter(originalDndMode)
+                    Log.d(TAG, "DND restored to original mode")
+                }
+            } catch (_: Exception) {}
+            originalDndMode = -1
+        }
     }
 
     private fun cancelActiveBuzzNotification() {

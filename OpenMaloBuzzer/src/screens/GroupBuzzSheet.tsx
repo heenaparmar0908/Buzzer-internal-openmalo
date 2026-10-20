@@ -1,5 +1,5 @@
 import React, {useState, useEffect, useRef} from 'react';
-import {View, Text, TextInput, TouchableOpacity, StyleSheet, Vibration, ActivityIndicator, ScrollView} from 'react-native';
+import {View, Text, TextInput, TouchableOpacity, StyleSheet, Vibration, ActivityIndicator, ScrollView, Alert} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import {User, Group, Buzz, BuzzResponse} from '../types';
@@ -55,7 +55,14 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
     if (!reason) return;
 
     setSending(true);
-    const docs = await createGroupBuzz(sender.id, memberIds, reason, note.trim() || null, group.id, group.name);
+    let docs;
+    try {
+      docs = await createGroupBuzz(sender.id, memberIds, reason, note.trim() || null, group.id, group.name);
+    } catch (err: any) {
+      setSending(false);
+      Alert.alert('Buzz Failed', 'Could not send group buzz. Check your internet connection and try again.');
+      return;
+    }
     buzzIdsRef.current = docs.map(d => d.id);
     Vibration.vibrate(200);
     setSending(false);

@@ -9,6 +9,7 @@ import {
   Vibration,
   ScrollView,
   Modal,
+  Alert,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -154,7 +155,13 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
       escalated: false,
     };
 
-    const doc = await createBuzz(buzzData);
+    let doc;
+    try {
+      doc = await createBuzz(buzzData);
+    } catch (err: any) {
+      Alert.alert('Buzz Failed', 'Could not send buzz. Check your internet connection and try again.');
+      return;
+    }
 
     const newEntry: ActiveBuzzEntry = {
       id: doc.id,

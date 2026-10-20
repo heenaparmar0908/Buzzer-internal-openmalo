@@ -1,4 +1,5 @@
 import {useState, useEffect, useCallback} from 'react';
+import {AppState} from 'react-native';
 import {User} from '../types';
 import {
   login as authLogin,
@@ -9,7 +10,15 @@ import {
   getStoredUser,
   logout as authLogout,
 } from '../services/auth';
-import {updateLastSeen} from '../services/firebase';
+import {updateLastSeen, updateFcmToken, getFcmToken} from '../services/firebase';
+
+/** Fetch current FCM token and write it to Firestore. */
+const refreshFcmToken = async (userId: string) => {
+  try {
+    const token = await getFcmToken();
+    if (token) await updateFcmToken(userId, token);
+  } catch {}
+};
 
 export const useAuth = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -25,6 +34,29 @@ export const useAuth = () => {
         setLoading(false);
       });
   }, []);
+
+  // Refresh FCM token on every app open and when app returns to foreground
+  useEffect(() => {
+    if (!user) return;
+    refreshFcmToken(user.id);
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active') refreshFcmToken(user.id);
+    });
+    return () => sub.remove();
+  }, [user]);
+
+  // Listen for FCM token rotation and update Firestore immediately
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const {getMessaging, onTokenRefresh} = require('@react-native-firebase/messaging');
+      const messaging = getMessaging();
+      const unsub = onTokenRefresh(messaging, async (newToken: string) => {
+        if (newToken) await updateFcmToken(user.id, newToken).catch(() => {});
+      });
+      return unsub;
+    } catch {}
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
