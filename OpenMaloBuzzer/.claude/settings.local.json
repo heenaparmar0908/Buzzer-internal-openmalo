@@ -52,7 +52,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git config:*)",
-      "Bash(grep -v \"SKIPPED\\\\|UP-TO-DATE\\\\|^$\\\\|Incubating\\\\|Deprecated\\\\|warning-mode\\\\|configuration cache\\\\|Gradle documentation\")"
+      "Bash(grep -v \"SKIPPED\\\\|UP-TO-DATE\\\\|^$\\\\|Incubating\\\\|Deprecated\\\\|warning-mode\\\\|configuration cache\\\\|Gradle documentation\")",
+      "Bash(git:*)",
+      "Bash(gh auth:*)"
     ]
   }
 }
