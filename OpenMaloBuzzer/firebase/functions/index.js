@@ -24,7 +24,7 @@ exports.onBuzzCreated = functions.firestore
     ]);
 
     if (!token) return;
-    const sender = senderDoc.exists ? senderDoc.data() : {name: 'Someone'};
+    const sender = senderDoc.exists ? senderDoc.data() : {name: 'User'};
 
     const message = {
       token,
@@ -63,10 +63,13 @@ exports.onBuzzCreated = functions.firestore
       await admin.messaging().send(message);
     } catch (err) {
       console.error('FCM send failed:', err);
-      // Remove invalid token
+      // Mark token as stale but don't delete — native service will refresh it
       if (err.code === 'messaging/invalid-registration-token' ||
           err.code === 'messaging/registration-token-not-registered') {
-        await db.collection('user_tokens').doc(buzz.to_user_id).delete();
+        await db.collection('user_tokens').doc(buzz.to_user_id).update({
+          fcm_token_stale: true,
+          stale_since: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
       }
     }
   });
@@ -85,7 +88,7 @@ exports.onBuzzUpdated = functions.firestore
       if (!token) return;
 
       const senderDoc = await db.collection('users').doc(after.from_user_id).get();
-      const senderName = senderDoc.exists ? senderDoc.data().name : 'Someone';
+      const senderName = senderDoc.exists ? senderDoc.data().name : 'User';
 
       try {
         await admin.messaging().send({
@@ -115,7 +118,7 @@ exports.onBuzzUpdated = functions.firestore
       ]);
 
       if (!token) return;
-      const sender = senderDoc.exists ? senderDoc.data() : {name: 'Someone'};
+      const sender = senderDoc.exists ? senderDoc.data() : {name: 'User'};
 
       try {
         await admin.messaging().send({
@@ -164,7 +167,7 @@ exports.onVoiceMessageCreated = functions.firestore
     ]);
 
     if (!token) return;
-    const senderName = senderDoc.exists ? senderDoc.data().name : 'Someone';
+    const senderName = senderDoc.exists ? senderDoc.data().name : 'User';
     const duration = mail.duration_seconds || 0;
 
     try {
@@ -205,9 +208,13 @@ exports.onVoiceMessageCreated = functions.firestore
       });
     } catch (err) {
       console.error('Voice message FCM failed:', err);
+      // Mark token as stale but don't delete — native service will refresh it
       if (err.code === 'messaging/invalid-registration-token' ||
           err.code === 'messaging/registration-token-not-registered') {
-        await db.collection('user_tokens').doc(mail.to_user_id).delete();
+        await db.collection('user_tokens').doc(mail.to_user_id).update({
+          fcm_token_stale: true,
+          stale_since: admin.firestore.FieldValue.serverTimestamp(),
+        }).catch(() => {});
       }
     }
   });

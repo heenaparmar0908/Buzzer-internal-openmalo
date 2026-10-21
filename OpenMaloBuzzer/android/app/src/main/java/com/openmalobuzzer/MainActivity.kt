@@ -45,7 +45,7 @@ class MainActivity : ReactActivity() {
     pendingBuzzPayload = Bundle().apply {
       putString("buzz_id", buzzId)
       putString("from_user_id", intent.getStringExtra("from_user_id") ?: "")
-      putString("from_user_name", intent.getStringExtra("from_user_name") ?: "Someone")
+      putString("from_user_name", intent.getStringExtra("from_user_name") ?: "")
       putString("reason", intent.getStringExtra("reason") ?: "")
       putString("note", intent.getStringExtra("note") ?: "")
     }

@@ -3,10 +3,11 @@ import notifee, {
   AndroidVisibility,
   EventType,
 } from '@notifee/react-native';
-import {NOTIFICATION_CHANNEL_ID, NOTIFICATION_CHANNEL_NAME, VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
+import {NOTIFICATION_CHANNEL_ID, NOTIFICATION_CHANNEL_NAME, SILENT_BUZZ_CHANNEL_ID, SILENT_BUZZ_CHANNEL_NAME, VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
 import {BuzzPayload} from '../types';
 
 export const createNotificationChannel = async () => {
+  // Sound channel — used only by native BuzzerService alarm
   await notifee.createChannel({
     id: NOTIFICATION_CHANNEL_ID,
     name: NOTIFICATION_CHANNEL_NAME,
@@ -15,6 +16,15 @@ export const createNotificationChannel = async () => {
     sound: 'buzz_alarm',
     vibration: true,
     vibrationPattern: [0, 500, 200, 500, 200, 500],
+    bypassDnd: true,
+  });
+  // Silent channel — used by notifee notifications (native service handles sound)
+  await notifee.createChannel({
+    id: SILENT_BUZZ_CHANNEL_ID,
+    name: SILENT_BUZZ_CHANNEL_NAME,
+    importance: AndroidImportance.HIGH,
+    visibility: AndroidVisibility.PUBLIC,
+    vibration: false,
     bypassDnd: true,
   });
   await notifee.createChannel({
@@ -33,10 +43,8 @@ export const showBuzzNotification = async (payload: BuzzPayload) => {
     title: `Buzz from ${payload.from_user_name}`,
     body: payload.reason + (payload.note ? ` — ${payload.note}` : ''),
     android: {
-      channelId: NOTIFICATION_CHANNEL_ID,
+      channelId: SILENT_BUZZ_CHANNEL_ID,
       importance: AndroidImportance.HIGH,
-      sound: 'buzz_alarm',
-      vibrationPattern: [0, 500, 200, 500, 200, 500],
       fullScreenAction: {
         id: 'incoming-buzz',
         launchActivity: 'default',
@@ -50,7 +58,6 @@ export const showBuzzNotification = async (payload: BuzzPayload) => {
         {title: 'Busy', pressAction: {id: 'busy'}},
       ],
       category: 'buzz' as any,
-      loopSound: true,
       ongoing: true,
       autoCancel: false,
     },

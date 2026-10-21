@@ -3,7 +3,7 @@ import {StatusBar, ActivityIndicator, View, StyleSheet, AppState, NativeModules,
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {useAuth} from './src/hooks/useAuth';
 import {createNotificationChannel, setupNotificationListeners, cancelBuzzNotification} from './src/services/notification';
-import {respondToBuzz, subscribeToIncomingBuzzes, subscribeToUsers, requestFcmPermission} from './src/services/firebase';
+import {respondToBuzz, subscribeToIncomingBuzzes, subscribeToUsers, requestFcmPermission, getUserName} from './src/services/firebase';
 import {promptBatteryOptimization, promptDndAccess} from './src/services/batteryOptimization';
 import {BuzzPayload, User, Group} from './src/types';
 
@@ -58,10 +58,13 @@ function App() {
         if (state === 'active') BuzzerService?.startService(user.id);
       });
       return () => sub.remove();
-    } else {
+    }
+    // Only stop service after loading is complete and user is definitely null (logged out)
+    // Don't stop during initial load — native service may already be running
+    if (!loading && !user) {
       BuzzerService?.stopService();
     }
-  }, [user]);
+  }, [user, loading]);
 
   useEffect(() => {
     if (!user) return;
@@ -77,12 +80,16 @@ function App() {
     if (!user) return;
     const unsubscribe = subscribeToIncomingBuzzes(
       user.id,
-      (buzz) => {
+      async (buzz) => {
         if (AppState.currentState === 'active') {
+          let name = usersMapRef.current[buzz.from_user_id];
+          if (!name) {
+            name = await getUserName(buzz.from_user_id);
+          }
           const payload: BuzzPayload = {
             buzz_id: buzz.id,
             from_user_id: buzz.from_user_id,
-            from_user_name: usersMapRef.current[buzz.from_user_id] || 'Someone',
+            from_user_name: name,
             reason: buzz.reason,
             note: buzz.note,
           };
@@ -155,10 +162,14 @@ function App() {
         }
         const data = await BuzzerService?.getPendingBuzz?.();
         if (data?.buzz_id) {
+          let pendingName = data.from_user_name;
+          if (!pendingName || pendingName === 'Someone') {
+            pendingName = await getUserName(data.from_user_id);
+          }
           setIncomingPayload({
             buzz_id: data.buzz_id,
             from_user_id: data.from_user_id,
-            from_user_name: data.from_user_name || 'Someone',
+            from_user_name: pendingName,
             reason: data.reason,
             note: data.note || null,
           });

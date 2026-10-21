@@ -19,8 +19,10 @@ import android.text.SpannableString
 import android.text.style.ForegroundColorSpan
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.messaging.FirebaseMessaging
 
 class BuzzerService : Service() {
 
@@ -42,6 +44,9 @@ class BuzzerService : Service() {
         const val PREF_USER_ID = "active_user_id"
         const val POLL_INTERVAL_MS = 15000L
         const val LISTENER_REFRESH_MS = 300000L // 5 minutes — re-establish Firestore listeners
+        const val FCM_TOKEN_REFRESH_MS = 3600000L // 1 hour — refresh FCM token
+        const val AUTH_CHECK_MS = 1800000L // 30 minutes — check Firebase Auth
+        val RESTART_RETRY_DELAYS = longArrayOf(3000L, 10000L, 30000L, 60000L) // escalating restart delays
     }
 
     private var buzzListener: ListenerRegistration? = null
@@ -59,6 +64,9 @@ class BuzzerService : Service() {
     private val seenBuzzIds = mutableSetOf<String>()
     private val handler = Handler(Looper.getMainLooper())
     private var currentUserId: String? = null
+    private var restartAttempt = 0
+    private var listenerRetryCount = 0
+    private val userNameCache = mutableMapOf<String, String>()
 
     private val pollRunnable = object : Runnable {
         override fun run() {
@@ -73,9 +81,36 @@ class BuzzerService : Service() {
         override fun run() {
             currentUserId?.let { userId ->
                 Log.d(TAG, "Periodic listener refresh for userId: $userId")
+                listenerRetryCount = 0 // Reset backoff on periodic refresh
                 startListening(userId)
             }
             handler.postDelayed(this, LISTENER_REFRESH_MS)
+        }
+    }
+
+    // Fix #1: Periodically refresh FCM token in native service
+    private val fcmTokenRefreshRunnable = object : Runnable {
+        override fun run() {
+            currentUserId?.let { userId ->
+                refreshFcmToken(userId)
+            }
+            handler.postDelayed(this, FCM_TOKEN_REFRESH_MS)
+        }
+    }
+
+    // Fix #3: Periodically check Firebase Auth is valid
+    private val authCheckRunnable = object : Runnable {
+        override fun run() {
+            ensureFirebaseAuth {
+                // After auth check, refresh listeners if needed
+                currentUserId?.let { userId ->
+                    if (buzzListener == null) {
+                        Log.d(TAG, "Auth check: listeners were null, restarting")
+                        startListening(userId)
+                    }
+                }
+            }
+            handler.postDelayed(this, AUTH_CHECK_MS)
         }
     }
 
@@ -127,8 +162,7 @@ class BuzzerService : Service() {
                 val db = FirebaseFirestore.getInstance()
                 db.collection("buzzes").document(buzzId)
                     .update(mapOf("response" to response, "responded_at" to System.currentTimeMillis()))
-                val nm = getSystemService(NotificationManager::class.java)
-                nm.cancel(buzzId.hashCode())
+                cancelAllNotificationsForBuzz(buzzId)
                 if (activeBuzzId == buzzId) activeBuzzId = null
             }
             return START_STICKY
@@ -144,18 +178,26 @@ class BuzzerService : Service() {
 
         if (action == ACTION_START) {
             saveUserId(userId)
+            restartAttempt = 0 // Reset restart counter on explicit start
         }
 
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
 
-        // Only re-attach listeners if not already listening for this user
-        if (currentUserId != userId || buzzListener == null) {
-            Log.d(TAG, "Starting listeners for userId: $userId")
-            startListening(userId)
-            startPolling()
+        // Fix #3: Ensure Firebase Auth before starting listeners
+        ensureFirebaseAuth {
+            // Only re-attach listeners if not already listening for this user
+            if (currentUserId != userId || buzzListener == null) {
+                Log.d(TAG, "Starting listeners for userId: $userId")
+                startListening(userId)
+                startPolling()
+            }
+            // Fix #1: Refresh FCM token on service start
+            refreshFcmToken(userId)
+            // Cancel restart alarm on successful setup
+            cancelRestartAlarm()
+            restartAttempt = 0
         }
-        scheduleRestartAlarm()
 
         return START_STICKY
     }
@@ -167,9 +209,14 @@ class BuzzerService : Service() {
         super.onTaskRemoved(rootIntent)
     }
 
+    // Fix #4: Escalating restart delays with multiple attempts
     private fun scheduleRestartAlarm() {
         try {
             val userId = getSavedUserId() ?: return
+            val delayIndex = restartAttempt.coerceAtMost(RESTART_RETRY_DELAYS.size - 1)
+            val delay = RESTART_RETRY_DELAYS[delayIndex]
+            restartAttempt++
+
             val restartIntent = Intent(this, BuzzerService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_USER_ID, userId)
@@ -180,20 +227,36 @@ class BuzzerService : Service() {
             )
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-                // Fallback: use inexact alarm
                 alarmManager.setAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
-                    System.currentTimeMillis() + 3000,
+                    System.currentTimeMillis() + delay,
                     pendingIntent
                 )
-                Log.d(TAG, "Restart alarm scheduled (inexact) in 3 seconds")
+                Log.d(TAG, "Restart alarm scheduled (inexact) in ${delay}ms (attempt $restartAttempt)")
             } else {
                 alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
-                    System.currentTimeMillis() + 3000,
+                    System.currentTimeMillis() + delay,
                     pendingIntent
                 )
-                Log.d(TAG, "Restart alarm scheduled (exact) in 3 seconds")
+                Log.d(TAG, "Restart alarm scheduled (exact) in ${delay}ms (attempt $restartAttempt)")
+            }
+
+            // Fix #4: Schedule a secondary backup alarm at a longer delay
+            if (restartAttempt <= 2) {
+                val backupIntent = Intent(this, BuzzerService::class.java).apply {
+                    action = ACTION_START
+                    putExtra(EXTRA_USER_ID, userId)
+                }
+                val backupPending = PendingIntent.getService(
+                    this, RESTART_REQUEST_CODE + 1, backupIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 120000, // 2 minute backup
+                    backupPending
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to schedule restart: ${e.message}")
@@ -212,6 +275,18 @@ class BuzzerService : Service() {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             alarmManager.cancel(pendingIntent)
         }
+        // Also cancel backup alarm
+        val backupIntent = Intent(this, BuzzerService::class.java).apply {
+            action = ACTION_START
+        }
+        val backupPending = PendingIntent.getService(
+            this, RESTART_REQUEST_CODE + 1, backupIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE
+        )
+        if (backupPending != null) {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmManager.cancel(backupPending)
+        }
     }
 
     private fun saveUserId(userId: String) {
@@ -229,10 +304,107 @@ class BuzzerService : Service() {
             .edit().remove(PREF_USER_ID).apply()
     }
 
+    // Fix #3: Ensure Firebase Anonymous Auth is valid
+    private fun ensureFirebaseAuth(onComplete: () -> Unit) {
+        try {
+            val auth = FirebaseAuth.getInstance()
+            val user = auth.currentUser
+            if (user == null) {
+                Log.d(TAG, "No Firebase Auth user, signing in anonymously")
+                auth.signInAnonymously()
+                    .addOnSuccessListener {
+                        Log.d(TAG, "Anonymous auth successful")
+                        onComplete()
+                    }
+                    .addOnFailureListener { e ->
+                        Log.e(TAG, "Anonymous auth failed: ${e.message}")
+                        onComplete() // Continue anyway, polling may still work
+                    }
+            } else {
+                // Force token refresh to ensure the auth token is still valid
+                user.getIdToken(true)
+                    .addOnSuccessListener {
+                        Log.d(TAG, "Auth token refreshed successfully")
+                        onComplete()
+                    }
+                    .addOnFailureListener { e ->
+                        Log.w(TAG, "Auth token refresh failed, re-authenticating: ${e.message}")
+                        auth.signInAnonymously()
+                            .addOnSuccessListener {
+                                Log.d(TAG, "Re-authentication successful")
+                                onComplete()
+                            }
+                            .addOnFailureListener { e2 ->
+                                Log.e(TAG, "Re-authentication failed: ${e2.message}")
+                                onComplete()
+                            }
+                    }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureFirebaseAuth error: ${e.message}")
+            onComplete()
+        }
+    }
+
+    // Fix #1: Refresh FCM token and save to Firestore from native service
+    private fun refreshFcmToken(userId: String) {
+        try {
+            FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { token ->
+                    if (token.isNullOrEmpty()) return@addOnSuccessListener
+                    Log.d(TAG, "FCM token refreshed, saving to Firestore")
+                    val db = FirebaseFirestore.getInstance()
+                    db.collection("user_tokens").document(userId)
+                        .set(mapOf("fcm_token" to token, "fcm_token_stale" to false))
+                        .addOnSuccessListener {
+                            Log.d(TAG, "FCM token saved successfully")
+                        }
+                        .addOnFailureListener { e ->
+                            Log.e(TAG, "Failed to save FCM token: ${e.message}")
+                        }
+                }
+                .addOnFailureListener { e ->
+                    Log.e(TAG, "Failed to get FCM token: ${e.message}")
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "refreshFcmToken error: ${e.message}")
+        }
+    }
+
+    private fun getListenerRetryDelay(): Long {
+        val delay = (5000L * (1 shl listenerRetryCount.coerceAtMost(4))).coerceAtMost(120000L) // 5s, 10s, 20s, 40s, 80s, max 120s
+        listenerRetryCount++
+        return delay
+    }
+
+    private fun scheduleListenerReconnect(userId: String) {
+        val delay = getListenerRetryDelay()
+        Log.d(TAG, "Scheduling listener reconnect in ${delay}ms (attempt $listenerRetryCount)")
+        handler.postDelayed({
+            ensureFirebaseAuth { startListening(userId) }
+        }, delay)
+    }
+
+    private fun preloadUserNames() {
+        val db = FirebaseFirestore.getInstance()
+        db.collection("users").whereEqualTo("is_active", true).get()
+            .addOnSuccessListener { snap ->
+                for (doc in snap.documents) {
+                    val name = doc.getString("name")
+                    if (name != null) userNameCache[doc.id] = name
+                }
+                Log.d(TAG, "Preloaded ${userNameCache.size} user names")
+            }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Failed to preload user names: ${e.message}")
+            }
+    }
+
     private fun startListening(userId: String) {
         stopListening()
         currentUserId = userId
         seenBuzzIds.clear()
+        preloadUserNames()
         val db = FirebaseFirestore.getInstance()
         Log.d(TAG, "Starting Firestore listener for userId: $userId")
 
@@ -242,9 +414,10 @@ class BuzzerService : Service() {
             .addSnapshotListener { snapshots, error ->
                 if (error != null) {
                     Log.e(TAG, "Buzz listener error: ${error.message}")
-                    handler.postDelayed({ startListening(userId) }, 5000)
+                    scheduleListenerReconnect(userId)
                     return@addSnapshotListener
                 }
+                listenerRetryCount = 0 // Reset on successful snapshot
                 if (snapshots == null) return@addSnapshotListener
                 Log.d(TAG, "Buzz snapshot: ${snapshots.documents.size} docs, ${snapshots.documentChanges.size} changes")
                 for (change in snapshots.documentChanges) {
@@ -269,10 +442,16 @@ class BuzzerService : Service() {
                 }
             }
 
+        // Fix #2: Add error recovery to responseListener
         responseListener = db.collection("buzzes")
             .whereEqualTo("to_user_id", userId)
             .addSnapshotListener { snapshots, error ->
-                if (error != null || snapshots == null) return@addSnapshotListener
+                if (error != null) {
+                    Log.e(TAG, "Response listener error: ${error.message}")
+                    scheduleListenerReconnect(userId)
+                    return@addSnapshotListener
+                }
+                if (snapshots == null) return@addSnapshotListener
                 for (change in snapshots.documentChanges) {
                     if (change.type == com.google.firebase.firestore.DocumentChange.Type.MODIFIED) {
                         val buzzId = change.document.id
@@ -281,8 +460,7 @@ class BuzzerService : Service() {
                         if (response != "none") {
                             Log.d(TAG, "Response detected for $buzzId: $response")
                             stopAlarm()
-                            val nm = getSystemService(NotificationManager::class.java)
-                            nm.cancel(buzzId.hashCode())
+                            cancelAllNotificationsForBuzz(buzzId)
                             if (activeBuzzId == buzzId) {
                                 activeBuzzId = null
                             }
@@ -295,13 +473,14 @@ class BuzzerService : Service() {
                 }
             }
 
-        // Listen for incoming voice mails
+        // Fix #2: Add error recovery to voiceMailListener
         Log.d(TAG, "Setting up voice mail listener for userId: $userId")
         voiceMailListener = db.collection("voice_mails")
             .whereEqualTo("to_user_id", userId)
             .addSnapshotListener { snapshots, error ->
                 if (error != null) {
                     Log.e(TAG, "Voice mail listener error: ${error.message}")
+                    scheduleListenerReconnect(userId)
                     return@addSnapshotListener
                 }
                 if (snapshots == null) return@addSnapshotListener
@@ -353,7 +532,15 @@ class BuzzerService : Service() {
                     }
                 }
             }
-            .addOnFailureListener { e -> Log.e(TAG, "Poll failed: ${e.message}") }
+            .addOnFailureListener { e ->
+                Log.e(TAG, "Poll failed: ${e.message}")
+                // If poll fails, check auth and retry poll after a short delay
+                ensureFirebaseAuth {
+                    handler.postDelayed({
+                        currentUserId?.let { uid -> pollForBuzzes(uid) }
+                    }, 5000)
+                }
+            }
 
         if (seenBuzzIds.size > 50) seenBuzzIds.clear()
     }
@@ -363,36 +550,41 @@ class BuzzerService : Service() {
         handler.postDelayed(pollRunnable, POLL_INTERVAL_MS)
         handler.removeCallbacks(listenerRefreshRunnable)
         handler.postDelayed(listenerRefreshRunnable, LISTENER_REFRESH_MS)
+        // Fix #1: Start periodic FCM token refresh
+        handler.removeCallbacks(fcmTokenRefreshRunnable)
+        handler.postDelayed(fcmTokenRefreshRunnable, FCM_TOKEN_REFRESH_MS)
+        // Fix #3: Start periodic auth check
+        handler.removeCallbacks(authCheckRunnable)
+        handler.postDelayed(authCheckRunnable, AUTH_CHECK_MS)
     }
 
     private fun stopPolling() {
         handler.removeCallbacks(pollRunnable)
         handler.removeCallbacks(listenerRefreshRunnable)
+        handler.removeCallbacks(fcmTokenRefreshRunnable)
+        handler.removeCallbacks(authCheckRunnable)
     }
 
     private fun showCancelledNotification(buzzId: String, fromUserId: String) {
-        val db = FirebaseFirestore.getInstance()
-        db.collection("users").document(fromUserId).get()
-            .addOnSuccessListener { doc ->
-                val senderName = doc.getString("name") ?: "Someone"
-                Log.d(TAG, "Showing cancelled notification from $senderName")
-                val launchIntent = Intent(this, MainActivity::class.java)
-                val pendingIntent = PendingIntent.getActivity(
-                    this, (buzzId + "_cancel").hashCode(), launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                val notification = NotificationCompat.Builder(this, BUZZ_CHANNEL_ID)
-                    .setSmallIcon(R.mipmap.ic_launcher)
-                    .setContentTitle("Buzz cancelled")
-                    .setContentText("$senderName cancelled the buzz")
-                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                    .setAutoCancel(true)
-                    .setTimeoutAfter(10000)
-                    .setContentIntent(pendingIntent)
-                    .build()
-                val nm = getSystemService(NotificationManager::class.java)
-                nm.notify((buzzId + "_cancel").hashCode(), notification)
-            }
+        resolveUserName(fromUserId) { senderName ->
+            Log.d(TAG, "Showing cancelled notification from $senderName")
+            val launchIntent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, (buzzId + "_cancel").hashCode(), launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(this, BUZZ_CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("Buzz cancelled")
+                .setContentText("$senderName cancelled the buzz")
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setTimeoutAfter(10000)
+                .setContentIntent(pendingIntent)
+                .build()
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.notify((buzzId + "_cancel").hashCode(), notification)
+        }
     }
 
     private fun coloredText(text: String, color: Int): SpannableString {
@@ -505,6 +697,21 @@ class BuzzerService : Service() {
         }
     }
 
+    // Cancel both native and notifee notifications for a buzz
+    private fun cancelAllNotificationsForBuzz(buzzId: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        // Cancel native notification (uses hashCode as ID)
+        nm.cancel(buzzId.hashCode())
+        // Cancel notifee notification (uses buzzId string as tag with ID 0)
+        nm.cancel(buzzId, 0)
+        // Also try cancelling all active notifications matching this buzz ID
+        for (notification in nm.activeNotifications) {
+            if (notification.tag == buzzId) {
+                nm.cancel(notification.tag, notification.id)
+            }
+        }
+    }
+
     private fun stopListening() {
         buzzListener?.remove()
         buzzListener = null
@@ -515,11 +722,30 @@ class BuzzerService : Service() {
         currentUserId = null
     }
 
-    private fun showBuzzNotification(buzzId: String, fromUserId: String, reason: String, note: String?) {
+    private fun resolveUserName(userId: String, callback: (String) -> Unit) {
+        if (userId.isEmpty()) {
+            callback("Unknown")
+            return
+        }
+        val cached = userNameCache[userId]
+        if (cached != null) {
+            callback(cached)
+            return
+        }
         val db = FirebaseFirestore.getInstance()
-        db.collection("users").document(fromUserId).get()
+        db.collection("users").document(userId).get()
             .addOnSuccessListener { doc ->
-                val senderName = doc.getString("name") ?: "Someone"
+                val name = doc.getString("name") ?: "User"
+                userNameCache[userId] = name
+                callback(name)
+            }
+            .addOnFailureListener {
+                callback("User")
+            }
+    }
+
+    private fun showBuzzNotification(buzzId: String, fromUserId: String, reason: String, note: String?) {
+        resolveUserName(fromUserId) { senderName ->
                 val body = if (note.isNullOrEmpty()) reason else "$reason — $note"
                 Log.d(TAG, "Showing notification: Buzz from $senderName - $body")
 
@@ -571,10 +797,7 @@ class BuzzerService : Service() {
     }
 
     private fun showVoiceMailNotification(mailId: String, fromUserId: String, duration: Long) {
-        val db = FirebaseFirestore.getInstance()
-        db.collection("users").document(fromUserId).get()
-            .addOnSuccessListener { doc ->
-                val senderName = doc.getString("name") ?: "Someone"
+        resolveUserName(fromUserId) { senderName ->
                 Log.d(TAG, "Showing voice mail notification from $senderName")
 
                 val launchIntent = Intent(this, MainActivity::class.java).apply {
@@ -597,10 +820,7 @@ class BuzzerService : Service() {
 
                 val nm = getSystemService(NotificationManager::class.java)
                 nm.notify(mailId.hashCode(), notification)
-            }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "Failed to get sender for voice mail: ${e.message}")
-            }
+        }
     }
 
     private fun buildNotification(): Notification {
@@ -658,10 +878,11 @@ class BuzzerService : Service() {
         }
     }
 
+    // Fix #4: Use wake lock with timeout that auto-renews
     private fun acquireWakeLock() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "buzzer::listener").apply {
-            acquire()
+            acquire(24 * 60 * 60 * 1000L) // 24 hour timeout, renewed on service restart
         }
     }
 

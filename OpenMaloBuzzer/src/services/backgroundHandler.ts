@@ -3,7 +3,7 @@ import notifee, {
   AndroidImportance,
   AndroidVisibility,
 } from '@notifee/react-native';
-import {NOTIFICATION_CHANNEL_ID, NOTIFICATION_CHANNEL_NAME, VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
+import {NOTIFICATION_CHANNEL_ID, SILENT_BUZZ_CHANNEL_ID, SILENT_BUZZ_CHANNEL_NAME, VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
 
 export const setupBackgroundHandler = () => {
   // Handle notification actions in background
@@ -32,27 +32,38 @@ export const setupBackgroundHandler = () => {
       const data = remoteMessage.data;
       if (!data) return;
 
+      // Resolve sender name: use FCM data, or fetch from Firestore
+      const resolveName = async (fromUserId: string, fromUserName?: string): Promise<string> => {
+        if (fromUserName && fromUserName !== 'Someone') return fromUserName;
+        if (!fromUserId) return 'User';
+        try {
+          const {getFirestore, doc, getDoc} = require('@react-native-firebase/firestore');
+          const db = getFirestore();
+          const snap = await getDoc(doc(db, 'users', fromUserId));
+          if (snap.exists()) return snap.data()?.name || 'User';
+        } catch {}
+        return fromUserName || 'User';
+      };
+
       if (data.type === 'buzz') {
+        const senderName = await resolveName(data.from_user_id, data.from_user_name);
+
         await notifee.createChannel({
-          id: NOTIFICATION_CHANNEL_ID,
-          name: NOTIFICATION_CHANNEL_NAME,
+          id: SILENT_BUZZ_CHANNEL_ID,
+          name: SILENT_BUZZ_CHANNEL_NAME,
           importance: AndroidImportance.HIGH,
           visibility: AndroidVisibility.PUBLIC,
-          sound: 'buzz_alarm',
-          vibration: true,
-          vibrationPattern: [0, 500, 200, 500, 200, 500],
+          vibration: false,
           bypassDnd: true,
         });
 
         await notifee.displayNotification({
           id: data.buzz_id,
-          title: `Buzz from ${data.from_user_name}`,
+          title: `Buzz from ${senderName}`,
           body: data.reason + (data.note ? ` — ${data.note}` : ''),
           android: {
-            channelId: NOTIFICATION_CHANNEL_ID,
+            channelId: SILENT_BUZZ_CHANNEL_ID,
             importance: AndroidImportance.HIGH,
-            sound: 'buzz_alarm',
-            vibrationPattern: [0, 500, 200, 500, 200, 500],
             fullScreenAction: {
               id: 'incoming-buzz',
               launchActivity: 'default',
@@ -64,7 +75,6 @@ export const setupBackgroundHandler = () => {
               {title: 'Busy', pressAction: {id: 'busy'}},
             ],
             category: 'buzz' as any,
-            loopSound: true,
             ongoing: true,
             autoCancel: false,
           },
@@ -82,7 +92,7 @@ export const setupBackgroundHandler = () => {
           vibration: true,
         });
 
-        const fromName = data.from_user_name || 'Someone';
+        const fromName = await resolveName(data.from_user_id, data.from_user_name);
         const duration = data.duration || '0';
 
         await notifee.displayNotification({
@@ -99,10 +109,11 @@ export const setupBackgroundHandler = () => {
       }
 
       if (data.type === 'buzz_cancelled') {
+        const cancellerName = await resolveName(data.from_user_id, data.from_user_name);
         await notifee.cancelNotification(data.buzz_id);
         await notifee.displayNotification({
           title: 'Buzz cancelled',
-          body: `${data.from_user_name || 'Sender'} cancelled the buzz`,
+          body: `${cancellerName} cancelled the buzz`,
           android: {
             channelId: NOTIFICATION_CHANNEL_ID,
             importance: AndroidImportance.DEFAULT,

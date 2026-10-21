@@ -7,6 +7,7 @@ import {
   limit as firestoreLimit,
   startAfter,
   getDocs,
+  getDoc,
   doc,
   addDoc,
   updateDoc,
@@ -19,6 +20,15 @@ import {User, Buzz, Reason, BuzzResponse, Group, CallLog, VoiceMail} from '../ty
 const db = getFirestore();
 
 // ─── Users ───────────────────────────────────────────────
+export const getUserName = async (userId: string): Promise<string> => {
+  if (!userId) return 'User';
+  try {
+    const snap = await getDoc(doc(db, COLLECTIONS.USERS, userId));
+    if (snap.exists()) return (snap.data() as User).name || 'User';
+  } catch {}
+  return 'User';
+};
+
 export const getUsers = () =>
   getDocs(
     query(collection(db, COLLECTIONS.USERS), where('is_active', '==', true)),
@@ -38,7 +48,7 @@ export const getUserByPhone = async (phone: string): Promise<User | null> => {
 };
 
 export const updateFcmToken = (userId: string, token: string) =>
-  setDoc(doc(db, COLLECTIONS.USER_TOKENS, userId), {fcm_token: token});
+  setDoc(doc(db, COLLECTIONS.USER_TOKENS, userId), {fcm_token: token, fcm_token_stale: false});
 
 export const updateLastSeen = (userId: string) =>
   updateDoc(doc(db, COLLECTIONS.USERS, userId), {last_seen_at: Date.now()});
