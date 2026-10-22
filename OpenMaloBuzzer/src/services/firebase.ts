@@ -1,174 +1,176 @@
-import {
-  getFirestore,
-  collection,
-  query,
-  where,
-  orderBy,
-  limit as firestoreLimit,
-  startAfter,
-  getDocs,
-  getDoc,
-  doc,
-  addDoc,
-  updateDoc,
-  setDoc,
-  onSnapshot,
-} from '@react-native-firebase/firestore';
-import {COLLECTIONS} from '../constants';
+import {supabase} from './supabase';
 import {User, Buzz, Reason, BuzzResponse, Group, CallLog, VoiceMail} from '../types';
 
-const db = getFirestore();
+let channelId = 0;
+const uid = () => `ch_${++channelId}_${Date.now()}`;
 
 // ─── Users ───────────────────────────────────────────────
 export const getUserName = async (userId: string): Promise<string> => {
   if (!userId) return 'User';
   try {
-    const snap = await getDoc(doc(db, COLLECTIONS.USERS, userId));
-    if (snap.exists()) return (snap.data() as User).name || 'User';
+    const {data} = await supabase.from('users').select('name').eq('id', userId).single();
+    return data?.name || 'User';
   } catch {}
   return 'User';
 };
 
-export const getUsers = () =>
-  getDocs(
-    query(collection(db, COLLECTIONS.USERS), where('is_active', '==', true)),
-  ).then(snap => snap.docs.map(d => ({id: d.id, ...d.data()} as User)));
-
-export const getUserByPhone = async (phone: string): Promise<User | null> => {
-  const snap = await getDocs(
-    query(
-      collection(db, COLLECTIONS.USERS),
-      where('phone', '==', phone),
-      where('is_active', '==', true),
-      firestoreLimit(1),
-    ),
-  );
-  if (snap.empty) return null;
-  return {id: snap.docs[0].id, ...snap.docs[0].data()} as User;
+export const getUsers = async () => {
+  const {data} = await supabase.from('users').select('*').eq('is_active', true);
+  return (data || []) as User[];
 };
 
-export const updateFcmToken = (userId: string, token: string) =>
-  setDoc(doc(db, COLLECTIONS.USER_TOKENS, userId), {fcm_token: token, fcm_token_stale: false});
+export const getUserByPhone = async (phone: string): Promise<User | null> => {
+  const {data} = await supabase
+    .from('users').select('*').eq('phone', phone).eq('is_active', true).limit(1).maybeSingle();
+  return data ? (data as User) : null;
+};
 
-export const updateLastSeen = (userId: string) =>
-  updateDoc(doc(db, COLLECTIONS.USERS, userId), {last_seen_at: Date.now()});
+export const updateFcmToken = async (userId: string, token: string) => {
+  await supabase.from('user_tokens').upsert({user_id: userId, fcm_token: token, fcm_token_stale: false});
+};
 
-export const addUser = (user: Omit<User, 'id'>) =>
-  addDoc(collection(db, COLLECTIONS.USERS), user);
+export const updateLastSeen = async (userId: string) => {
+  await supabase.from('users').update({last_seen_at: Date.now()}).eq('id', userId);
+};
 
-export const removeUser = (userId: string) =>
-  updateDoc(doc(db, COLLECTIONS.USERS, userId), {is_active: false});
+export const addUser = async (user: Omit<User, 'id'>) => {
+  const {data, error} = await supabase.from('users').insert(user).select().single();
+  if (error) throw error;
+  return {id: data.id};
+};
 
-export const resetUserPin = (userId: string, pinHash: string) =>
-  updateDoc(doc(db, COLLECTIONS.USERS, userId), {pin_hash: pinHash});
+export const removeUser = async (userId: string) => {
+  await supabase.from('users').update({is_active: false}).eq('id', userId);
+};
 
-export const updateUserProfile = (userId: string, data: {name?: string; phone?: string}) =>
-  updateDoc(doc(db, COLLECTIONS.USERS, userId), data);
+export const removeInactiveByPhone = async (phone: string) => {
+  await supabase.from('users').delete().eq('phone', phone).eq('is_active', false);
+};
 
-export const updateUserRole = (userId: string, role: string) =>
-  updateDoc(doc(db, COLLECTIONS.USERS, userId), {role});
+export const resetUserPin = async (userId: string, pinHash: string) => {
+  await supabase.from('users').update({pin_hash: pinHash}).eq('id', userId);
+};
 
-export const subscribeToUsers = (callback: (users: User[]) => void) =>
-  onSnapshot(
-    query(collection(db, COLLECTIONS.USERS), where('is_active', '==', true)),
-    snap => {
-      if (!snap) return;
-      callback(snap.docs.map(d => ({id: d.id, ...d.data()} as User)));
-    },
-    err => console.warn('subscribeToUsers error:', err),
-  );
+export const updateUserProfile = async (userId: string, data: {name?: string; phone?: string}) => {
+  await supabase.from('users').update(data).eq('id', userId);
+};
 
-// ─── Buzzes ──────────────────────────────────────────────
-export const createBuzz = (buzz: Omit<Buzz, 'id'>) =>
-  addDoc(collection(db, COLLECTIONS.BUZZES), buzz);
+export const updateUserRole = async (userId: string, role: string) => {
+  await supabase.from('users').update({role}).eq('id', userId);
+};
 
-export const respondToBuzz = (buzzId: string, response: BuzzResponse) =>
-  updateDoc(doc(db, COLLECTIONS.BUZZES, buzzId), {
-    response,
-    responded_at: Date.now(),
+export const subscribeToUsers = (callback: (users: User[]) => void) => {
+  // Initial fetch
+  supabase.from('users').select('*').eq('is_active', true).then(({data}) => {
+    if (data) callback(data as User[]);
   });
 
-export const markEscalated = (buzzId: string) =>
-  updateDoc(doc(db, COLLECTIONS.BUZZES, buzzId), {escalated: true});
+  const channel = supabase
+    .channel(uid())
+    .on('postgres_changes', {event: '*', schema: 'public', table: 'users'}, () => {
+      supabase.from('users').select('*').eq('is_active', true).then(({data}) => {
+        if (data) callback(data as User[]);
+      });
+    })
+    .subscribe();
 
-export const subscribeToBuzz = (buzzId: string, callback: (buzz: Buzz) => void) =>
-  onSnapshot(
-    doc(db, COLLECTIONS.BUZZES, buzzId),
-    snap => {
-      if (!snap || !snap.exists()) return;
-      callback({id: snap.id, ...snap.data()} as Buzz);
-    },
-    err => console.warn('subscribeToBuzz error:', err),
-  );
+  return () => { supabase.removeChannel(channel); };
+};
 
-export const getRecentBuzzes = (userId: string, count = 20) => {
+// ─── Buzzes ──────────────────────────────────────────────
+export const createBuzz = async (buzz: Omit<Buzz, 'id'>) => {
+  const {data, error} = await supabase.from('buzzes').insert(buzz).select().single();
+  if (error) throw error;
+  return {id: data.id};
+};
+
+export const respondToBuzz = async (buzzId: string, response: BuzzResponse) => {
+  await supabase.from('buzzes').update({response, responded_at: Date.now()}).eq('id', buzzId);
+};
+
+export const markEscalated = async (buzzId: string) => {
+  await supabase.from('buzzes').update({escalated: true}).eq('id', buzzId);
+};
+
+export const subscribeToBuzz = (buzzId: string, callback: (buzz: Buzz) => void) => {
+  // Initial fetch
+  supabase.from('buzzes').select('*').eq('id', buzzId).single().then(({data}) => {
+    if (data) callback(data as Buzz);
+  });
+
+  const channel = supabase
+    .channel(uid())
+    .on('postgres_changes', {event: 'UPDATE', schema: 'public', table: 'buzzes', filter: `id=eq.${buzzId}`}, (payload) => {
+      callback(payload.new as Buzz);
+    })
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
+};
+
+export const getRecentBuzzes = async (userId: string, count = 20) => {
   const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
-  return getDocs(
-    query(
-      collection(db, COLLECTIONS.BUZZES),
-      where('from_user_id', '==', userId),
-      where('created_at', '>=', fiveDaysAgo),
-      orderBy('created_at', 'desc'),
-      firestoreLimit(count),
-    ),
-  ).then(snap => snap.docs.map(d => ({id: d.id, ...d.data()} as Buzz)));
+  const {data} = await supabase
+    .from('buzzes').select('*')
+    .eq('from_user_id', userId)
+    .gte('created_at', fiveDaysAgo)
+    .order('created_at', {ascending: false})
+    .limit(count);
+  return (data || []) as Buzz[];
 };
 
 const PAGE_SIZE = 15;
 
-export const getBuzzLogPage = async (lastDoc?: any) => {
-  const since = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days
-  const constraints: any[] = [
-    where('created_at', '>=', since),
-    orderBy('created_at', 'desc'),
-    firestoreLimit(PAGE_SIZE),
-  ];
-  if (lastDoc) {
-    constraints.push(startAfter(lastDoc));
-  }
-  const snap = await getDocs(
-    query(collection(db, COLLECTIONS.BUZZES), ...constraints),
-  );
+export const getBuzzLogPage = async (page = 0) => {
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const from = page * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
+
+  const {data} = await supabase
+    .from('buzzes').select('*')
+    .gte('created_at', since)
+    .order('created_at', {ascending: false})
+    .range(from, to);
+
+  const buzzes = (data || []) as Buzz[];
   return {
-    buzzes: snap.docs.map(d => ({id: d.id, ...d.data()} as Buzz)),
-    lastDoc: snap.docs[snap.docs.length - 1] || null,
-    hasMore: snap.docs.length === PAGE_SIZE,
+    buzzes,
+    lastDoc: page + 1, // next page number
+    hasMore: buzzes.length === PAGE_SIZE,
   };
 };
 
 // ─── Reasons ─────────────────────────────────────────────
-export const getReasons = () =>
-  getDocs(
-    query(
-      collection(db, COLLECTIONS.REASONS),
-      where('is_active', '==', true),
-      orderBy('sort_order'),
-    ),
-  ).then(snap => snap.docs.map(d => ({id: d.id, ...d.data()} as Reason)));
+export const getReasons = async () => {
+  const {data} = await supabase
+    .from('reasons').select('*').eq('is_active', true).order('sort_order');
+  return (data || []) as Reason[];
+};
 
-export const subscribeToReasons = (callback: (reasons: Reason[]) => void) =>
-  onSnapshot(
-    query(
-      collection(db, COLLECTIONS.REASONS),
-      where('is_active', '==', true),
-      orderBy('sort_order'),
-    ),
-    snap => {
-      if (!snap) return;
-      callback(snap.docs.map(d => ({id: d.id, ...d.data()} as Reason)));
-    },
-    err => console.warn('subscribeToReasons error:', err),
-  );
-
-export const addReason = (label: string, sortOrder: number) =>
-  addDoc(collection(db, COLLECTIONS.REASONS), {
-    label,
-    sort_order: sortOrder,
-    is_active: true,
+export const subscribeToReasons = (callback: (reasons: Reason[]) => void) => {
+  supabase.from('reasons').select('*').eq('is_active', true).order('sort_order').then(({data}) => {
+    if (data) callback(data as Reason[]);
   });
 
-export const removeReason = (reasonId: string) =>
-  updateDoc(doc(db, COLLECTIONS.REASONS, reasonId), {is_active: false});
+  const channel = supabase
+    .channel(uid())
+    .on('postgres_changes', {event: '*', schema: 'public', table: 'reasons'}, () => {
+      supabase.from('reasons').select('*').eq('is_active', true).order('sort_order').then(({data}) => {
+        if (data) callback(data as Reason[]);
+      });
+    })
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
+};
+
+export const addReason = async (label: string, sortOrder: number) => {
+  await supabase.from('reasons').insert({label, sort_order: sortOrder, is_active: true});
+};
+
+export const removeReason = async (reasonId: string) => {
+  await supabase.from('reasons').update({is_active: false}).eq('id', reasonId);
+};
 
 // ─── Incoming Buzz Listener ──────────────────────────────
 export const subscribeToIncomingBuzzes = (
@@ -176,102 +178,113 @@ export const subscribeToIncomingBuzzes = (
   callback: (buzz: Buzz) => void,
   onRemoved?: (buzzId: string) => void,
 ) => {
-  let isFirstSnapshot = true;
-  return onSnapshot(
-    query(
-      collection(db, COLLECTIONS.BUZZES),
-      where('to_user_id', '==', userId),
-      where('response', '==', 'none'),
-    ),
-    snap => {
-      if (!snap) return;
-      snap.docChanges().forEach(change => {
-        if (change.type === 'added') {
-          const buzz = {id: change.doc.id, ...change.doc.data()} as Buzz;
-          // Only alert for buzzes created in the last 2 minutes
-          if (Date.now() - buzz.created_at < 120000) {
-            callback(buzz);
+  let ready = false;
+  setTimeout(() => { ready = true; }, 2000);
+
+  // Initial fetch for existing pending buzzes
+  supabase.from('buzzes').select('*')
+    .eq('to_user_id', userId)
+    .eq('response', 'none')
+    .then(({data}) => {
+      if (data) {
+        data.forEach(buzz => {
+          if (Date.now() - (buzz as Buzz).created_at < 120000) {
+            callback(buzz as Buzz);
           }
-        }
-        if (change.type === 'removed' && !isFirstSnapshot && onRemoved) {
-          onRemoved(change.doc.id);
-        }
-      });
-      isFirstSnapshot = false;
-    },
-    err => console.warn('subscribeToIncomingBuzzes error:', err),
-  );
+        });
+      }
+    });
+
+  const channel = supabase
+    .channel(uid())
+    .on('postgres_changes', {event: 'INSERT', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, (payload) => {
+      const buzz = payload.new as Buzz;
+      if (buzz.response === 'none' && Date.now() - buzz.created_at < 120000) {
+        callback(buzz);
+      }
+    })
+    .on('postgres_changes', {event: 'UPDATE', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, (payload) => {
+      const buzz = payload.new as Buzz;
+      if (buzz.response !== 'none' && ready && onRemoved) {
+        onRemoved(buzz.id);
+      }
+    })
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
 };
 
 export const subscribeToNewVoiceMails = (
   userId: string,
   callback: (mail: VoiceMail) => void,
 ) => {
-  let isFirstSnapshot = true;
-  return onSnapshot(
-    query(
-      collection(db, COLLECTIONS.VOICE_MAILS),
-      where('to_user_id', '==', userId),
-      orderBy('created_at', 'desc'),
-    ),
-    snap => {
-      if (!snap) return;
-      if (isFirstSnapshot) {
-        isFirstSnapshot = false;
-        return;
+  const channel = supabase
+    .channel(uid())
+    .on('postgres_changes', {event: 'INSERT', schema: 'public', table: 'voice_mails', filter: `to_user_id=eq.${userId}`}, (payload) => {
+      const mail = payload.new as VoiceMail;
+      if (!mail.listened && !mail.deleted && Date.now() - mail.created_at < 120000) {
+        callback(mail);
       }
-      snap.docChanges().forEach(change => {
-        if (change.type === 'added') {
-          const mail = {id: change.doc.id, ...change.doc.data()} as VoiceMail;
-          if (!mail.listened && Date.now() - mail.created_at < 120000) {
-            callback(mail);
-          }
-        }
-      });
-    },
-    err => console.warn('subscribeToNewVoiceMails error:', err),
-  );
+    })
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
 };
 
 export const subscribeToMissedBuzzes = (
   userId: string,
   callback: (buzzes: Buzz[]) => void,
-) =>
-  onSnapshot(
-    query(
-      collection(db, COLLECTIONS.BUZZES),
-      where('to_user_id', '==', userId),
-      where('response', '==', 'none'),
-    ),
-    snap => {
-      if (!snap) return;
-      callback(snap.docs.map(d => ({id: d.id, ...d.data()} as Buzz)));
-    },
-    err => console.warn('subscribeToMissedBuzzes error:', err),
-  );
+) => {
+  // Initial fetch
+  supabase.from('buzzes').select('*').eq('to_user_id', userId).eq('response', 'none').then(({data}) => {
+    if (data) callback(data as Buzz[]);
+  });
+
+  const channel = supabase
+    .channel(uid())
+    .on('postgres_changes', {event: '*', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, () => {
+      supabase.from('buzzes').select('*').eq('to_user_id', userId).eq('response', 'none').then(({data}) => {
+        if (data) callback(data as Buzz[]);
+      });
+    })
+    .subscribe();
+
+  return () => { supabase.removeChannel(channel); };
+};
 
 // ─── Groups ─────────────────────────────────────────────
-export const subscribeToGroups = (callback: (groups: Group[]) => void) =>
-  onSnapshot(
-    query(collection(db, COLLECTIONS.GROUPS), where('is_active', '==', true)),
-    snap => {
-      if (!snap) return;
-      callback(snap.docs.map(d => ({id: d.id, ...d.data()} as Group)));
-    },
-    err => console.warn('subscribeToGroups error:', err),
-  );
+export const subscribeToGroups = (callback: (groups: Group[]) => void) => {
+  supabase.from('groups').select('*').eq('is_active', true).then(({data}) => {
+    if (data) callback(data as Group[]);
+  });
 
-export const createGroup = (group: Omit<Group, 'id'>) =>
-  addDoc(collection(db, COLLECTIONS.GROUPS), group);
+  const channel = supabase
+    .channel(uid())
+    .on('postgres_changes', {event: '*', schema: 'public', table: 'groups'}, () => {
+      supabase.from('groups').select('*').eq('is_active', true).then(({data}) => {
+        if (data) callback(data as Group[]);
+      });
+    })
+    .subscribe();
 
-export const updateGroup = (groupId: string, data: {name?: string; member_ids?: string[]}) =>
-  updateDoc(doc(db, COLLECTIONS.GROUPS, groupId), data);
+  return () => { supabase.removeChannel(channel); };
+};
 
-export const deleteGroup = (groupId: string) =>
-  updateDoc(doc(db, COLLECTIONS.GROUPS, groupId), {is_active: false});
+export const createGroup = async (group: Omit<Group, 'id'>) => {
+  await supabase.from('groups').insert(group);
+};
+
+export const updateGroup = async (groupId: string, data: {name?: string; member_ids?: string[]}) => {
+  await supabase.from('groups').update(data).eq('id', groupId);
+};
+
+export const deleteGroup = async (groupId: string) => {
+  await supabase.from('groups').delete().eq('id', groupId);
+};
 
 export const createGroupBuzz = async (
   senderId: string,
+  senderName: string,
   memberIds: string[],
   reason: string,
   note: string | null,
@@ -279,69 +292,77 @@ export const createGroupBuzz = async (
   groupName: string,
 ) => {
   const now = Date.now();
-  const promises = memberIds.map(memberId =>
-    addDoc(collection(db, COLLECTIONS.BUZZES), {
-      from_user_id: senderId,
-      to_user_id: memberId,
-      reason,
-      note,
-      created_at: now,
-      responded_at: null,
-      response: 'none',
-      escalated: false,
-      group_id: groupId,
-      group_name: groupName,
-    }),
-  );
-  return Promise.all(promises);
+  const rows = memberIds.map(memberId => ({
+    from_user_id: senderId,
+    from_user_name: senderName,
+    to_user_id: memberId,
+    reason,
+    note,
+    created_at: now,
+    responded_at: null,
+    response: 'none',
+    escalated: false,
+    group_id: groupId,
+    group_name: groupName,
+  }));
+
+  const {data, error} = await supabase.from('buzzes').insert(rows).select();
+  if (error) throw error;
+  return (data || []).map((d: any) => ({id: d.id}));
 };
 
 // ─── Call Logs ───────────────────────────────────────────
-export const addCallLog = (log: Omit<CallLog, 'id'>) =>
-  addDoc(collection(db, COLLECTIONS.CALL_LOGS), log);
+export const addCallLog = async (log: Omit<CallLog, 'id'>) => {
+  await supabase.from('call_logs').insert(log);
+};
 
-export const getCallLogs = (userId: string, count = 20) =>
-  getDocs(
-    query(
-      collection(db, COLLECTIONS.CALL_LOGS),
-      where('caller_id', '==', userId),
-      orderBy('started_at', 'desc'),
-      firestoreLimit(count),
-    ),
-  ).then(snap => snap.docs.map(d => ({id: d.id, ...d.data()} as CallLog)));
+export const getCallLogs = async (userId: string, count = 20) => {
+  const {data} = await supabase
+    .from('call_logs').select('*')
+    .eq('caller_id', userId)
+    .order('started_at', {ascending: false})
+    .limit(count);
+  return (data || []) as CallLog[];
+};
 
 // ─── Voice Mails ────────────────────────────────────────
-export const addVoiceMail = (mail: Omit<VoiceMail, 'id'>) =>
-  addDoc(collection(db, COLLECTIONS.VOICE_MAILS), mail);
+export const addVoiceMail = async (mail: Omit<VoiceMail, 'id'>) => {
+  await supabase.from('voice_mails').insert(mail);
+};
 
 export const subscribeToVoiceMails = (
   userId: string,
   callback: (mails: VoiceMail[]) => void,
-) =>
-  onSnapshot(
-    query(
-      collection(db, COLLECTIONS.VOICE_MAILS),
-      where('to_user_id', '==', userId),
-      orderBy('created_at', 'desc'),
-    ),
-    snap => {
-      if (!snap) return;
-      callback(
-        snap.docs
-          .map(d => ({id: d.id, ...d.data()} as VoiceMail))
-          .filter(m => !m.deleted),
-      );
-    },
-    err => console.warn('subscribeToVoiceMails error:', err),
-  );
+) => {
+  const fetchMails = () => {
+    supabase.from('voice_mails').select('*')
+      .eq('to_user_id', userId)
+      .eq('deleted', false)
+      .order('created_at', {ascending: false})
+      .then(({data}) => {
+        if (data) callback(data as VoiceMail[]);
+      });
+  };
 
-export const markVoiceMailListened = (mailId: string) =>
-  updateDoc(doc(db, COLLECTIONS.VOICE_MAILS, mailId), {listened: true});
+  fetchMails();
 
-export const deleteVoiceMail = (mailId: string) =>
-  updateDoc(doc(db, COLLECTIONS.VOICE_MAILS, mailId), {deleted: true});
+  const channel = supabase
+    .channel(uid())
+    .on('postgres_changes', {event: '*', schema: 'public', table: 'voice_mails', filter: `to_user_id=eq.${userId}`}, fetchMails)
+    .subscribe();
 
-// ─── FCM ─────────────────────────────────────────────────
+  return () => { supabase.removeChannel(channel); };
+};
+
+export const markVoiceMailListened = async (mailId: string) => {
+  await supabase.from('voice_mails').update({listened: true}).eq('id', mailId);
+};
+
+export const deleteVoiceMail = async (mailId: string) => {
+  await supabase.from('voice_mails').delete().eq('id', mailId);
+};
+
+// ─── FCM (still uses Firebase Messaging) ─────────────────
 export const requestFcmPermission = async () => {
   try {
     const {getMessaging, requestPermission} = require('@react-native-firebase/messaging');

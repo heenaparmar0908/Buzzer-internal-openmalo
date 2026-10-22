@@ -15,6 +15,7 @@ export interface User {
 export interface Buzz {
   id: string;
   from_user_id: string;
+  from_user_name?: string;
   to_user_id: string;
   reason: string;
   note: string | null;

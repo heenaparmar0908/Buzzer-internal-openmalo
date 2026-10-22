@@ -392,9 +392,9 @@ const styles = StyleSheet.create({
   },
   modalIcon: {color: '#FF4D4D', fontSize: 32, fontWeight: '900'},
   modalTitle: {color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 8},
-  modalMessage: {color: '#888', fontSize: 15, textAlign: 'center', marginBottom: 24, lineHeight: 22},
+  modalMessage: {color: '#888', fontSize: 18, textAlign: 'center', marginBottom: 24, lineHeight: 22},
   modalBtn: {width: '100%', backgroundColor: '#FF4D4D', paddingVertical: 14, borderRadius: 12, alignItems: 'center'},
-  modalBtnText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  modalBtnText: {color: '#fff', fontSize: 18, fontWeight: '700'},
 });
 
 export default SignupScreen;

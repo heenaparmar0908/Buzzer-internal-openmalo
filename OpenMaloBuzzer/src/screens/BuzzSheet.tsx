@@ -18,6 +18,7 @@ import {User, Buzz, BuzzResponse} from '../types';
 import {useReasons} from '../hooks/useReasons';
 import {useUsers} from '../hooks/useUsers';
 import {createBuzz, subscribeToBuzz, markEscalated, respondToBuzz} from '../services/firebase';
+import {sendBuzzPush, sendBuzzCancelledPush, sendEscalationPush} from '../services/pushNotification';
 import {
   MAX_NOTE_LENGTH,
   REBUZZ_TIMEOUT_MS,
@@ -47,7 +48,7 @@ const RESPONSE_CONFIG: Record<BuzzResponse, {label: string; color: string; icon:
   five_min: {label: '5 min', color: '#FF9800', icon: 'timer'},
   busy: {label: 'Busy', color: '#F44336', icon: 'cancel'},
   cancelled: {label: 'Cancelled', color: '#888', icon: 'block'},
-  dismissed: {label: 'Seen', color: '#9C27B0', icon: 'visibility'},
+  dismissed: {label: 'Not responded', color: '#FF9800', icon: 'warning'},
   none: {label: 'Waiting...', color: '#555', icon: 'hourglass-empty'},
 };
 
@@ -110,6 +111,7 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
       if (elapsed >= REBUZZ_TIMEOUT_MS) {
         toEscalate.push(buzz.id);
         markEscalated(buzz.id);
+        sendEscalationPush(buzz.receiver.id, buzz.id, sender.id, sender.name, sentReasonRef.current, sentNoteRef.current).catch(() => {});
       }
     });
 
@@ -146,6 +148,7 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
 
     const buzzData: Omit<Buzz, 'id'> = {
       from_user_id: sender.id,
+      from_user_name: sender.name,
       to_user_id: targetUser.id,
       reason,
       note: buzzNote,
@@ -162,6 +165,9 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
       Alert.alert('Buzz Failed', 'Could not send buzz. Check your internet connection and try again.');
       return;
     }
+
+    // Send FCM push via Supabase Edge Function (for killed/background state)
+    sendBuzzPush(targetUser.id, doc.id, sender.id, sender.name, reason, buzzNote).catch(() => {});
 
     const newEntry: ActiveBuzzEntry = {
       id: doc.id,
@@ -208,6 +214,7 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
     for (const buzz of activeBuzzes) {
       if (buzz.response === 'none') {
         await respondToBuzz(buzz.id, 'cancelled');
+        sendBuzzCancelledPush(buzz.receiver.id, buzz.id, sender.name).catch(() => {});
       }
     }
     onClose();
@@ -265,7 +272,6 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
             autoFocus
           />
         )}
-        <TextInput style={styles.noteInput} placeholder="Optional note (40 chars)" placeholderTextColor="#666" value={note} onChangeText={setNote} maxLength={MAX_NOTE_LENGTH} />
         <TouchableOpacity
           style={[styles.buzzButton, !(isOther ? customReason.trim() : selectedReason) && styles.buzzButtonDisabled]}
           onPress={sendBuzz}
@@ -289,6 +295,8 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
         </Text>
         <View style={{width: 32}} />
       </View>
+
+      <Text style={styles.sentReason}>{sentReasonRef.current}</Text>
 
       {activeBuzzes.length > 1 && (
         <Text style={styles.statusSummary}>
@@ -392,53 +400,54 @@ const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0D0D0D', paddingHorizontal: 20},
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 16},
   headerTitle: {color: '#fff', fontSize: 22, fontWeight: '700'},
-  label: {color: '#888', fontSize: 15, fontWeight: '600', marginBottom: 12, marginTop: 8},
+  label: {color: '#888', fontSize: 18, fontWeight: '600', marginBottom: 12, marginTop: 8},
   chipsContainer: {flexDirection: 'row', flexWrap: 'wrap', gap: 8},
   chip: {backgroundColor: '#1A1A1A', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, borderColor: '#333'},
   chipSelected: {backgroundColor: '#3a1515', borderColor: '#FF4D4D'},
   chipText: {color: '#ccc', fontSize: 16},
   chipTextSelected: {color: '#FF4D4D', fontWeight: '600'},
-  noteInput: {backgroundColor: '#1A1A1A', color: '#fff', fontSize: 17, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 10, marginTop: 16, borderWidth: 1, borderColor: '#333'},
+  noteInput: {backgroundColor: '#1A1A1A', color: '#fff', fontSize: 18, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 10, marginTop: 16, borderWidth: 1, borderColor: '#333'},
   buzzButton: {backgroundColor: '#4CAF50', paddingVertical: 20, borderRadius: 14, alignItems: 'center', marginTop: 24},
   buzzButtonDisabled: {opacity: 0.4},
   buzzButtonText: {color: '#fff', fontSize: 24, fontWeight: '900', letterSpacing: 2},
 
-  statusSummary: {color: '#888', fontSize: 14, fontWeight: '600', textAlign: 'center', marginBottom: 12},
+  sentReason: {color: '#FF4D4D', fontSize: 18, fontWeight: '600', textAlign: 'center', marginBottom: 8},
+  statusSummary: {color: '#888', fontSize: 18, fontWeight: '600', textAlign: 'center', marginBottom: 12},
 
   buzzRow: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 12, padding: 14, marginBottom: 8},
   buzzAvatar: {width: 48, height: 48, borderRadius: 24, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12, borderWidth: 2},
   buzzAvatarText: {color: '#fff', fontSize: 20, fontWeight: '700'},
   buzzInfo: {flex: 1},
-  buzzName: {color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 4},
+  buzzName: {color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 4},
   buzzBadge: {flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1, gap: 4},
-  buzzBadgeText: {fontSize: 13, fontWeight: '700'},
+  buzzBadgeText: {fontSize: 18, fontWeight: '700'},
   buzzRight: {alignItems: 'flex-end', gap: 6},
-  buzzElapsed: {color: '#999', fontSize: 15, fontWeight: '600'},
-  escalatedText: {color: '#FF9800', fontSize: 12, fontWeight: '600', marginTop: 2},
+  buzzElapsed: {color: '#999', fontSize: 18, fontWeight: '600'},
+  escalatedText: {color: '#FF9800', fontSize: 18, fontWeight: '600', marginTop: 2},
   callIcon: {width: 32, height: 32, borderRadius: 16, backgroundColor: '#1a3a1a', alignItems: 'center', justifyContent: 'center'},
 
   addBuzzBtn: {flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#1A1A1A', borderRadius: 12, padding: 16, marginTop: 8, borderWidth: 1, borderColor: '#333', borderStyle: 'dashed'},
-  addBuzzBtnText: {color: '#64B5F6', fontSize: 16, fontWeight: '700'},
+  addBuzzBtnText: {color: '#64B5F6', fontSize: 18, fontWeight: '700'},
 
   endButton: {backgroundColor: '#F44336', paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginBottom: 32},
   endButtonText: {color: '#fff', fontSize: 19, fontWeight: '800'},
   doneButton: {backgroundColor: '#1A1A1A', paddingVertical: 16, borderRadius: 14, alignItems: 'center', marginBottom: 32},
-  doneButtonText: {color: '#ccc', fontSize: 17, fontWeight: '600'},
+  doneButtonText: {color: '#ccc', fontSize: 18, fontWeight: '600'},
 
   pickerOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end'},
   pickerSheet: {backgroundColor: '#1A1A1A', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 16, paddingHorizontal: 20, maxHeight: '60%'},
   pickerHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4},
   pickerTitle: {color: '#fff', fontSize: 20, fontWeight: '800'},
-  pickerReason: {color: '#FF4D4D', fontSize: 14, fontWeight: '600', marginBottom: 16},
+  pickerReason: {color: '#FF4D4D', fontSize: 18, fontWeight: '600', marginBottom: 16},
   pickerUser: {flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#252525'},
   pickerAvatar: {width: 44, height: 44, borderRadius: 22, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12},
   pickerAvatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
   pickerDot: {position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: '#4CAF50', borderWidth: 2, borderColor: '#1A1A1A'},
   pickerDotOff: {backgroundColor: '#444'},
   pickerInfo: {flex: 1},
-  pickerName: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  pickerRole: {color: '#999', fontSize: 13, textTransform: 'capitalize'},
-  pickerEmpty: {color: '#666', fontSize: 15, textAlign: 'center', paddingVertical: 24},
+  pickerName: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  pickerRole: {color: '#999', fontSize: 18, textTransform: 'capitalize'},
+  pickerEmpty: {color: '#666', fontSize: 18, textAlign: 'center', paddingVertical: 24},
 });
 
 export default BuzzSheet;

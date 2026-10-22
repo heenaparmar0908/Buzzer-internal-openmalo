@@ -1,29 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {User} from '../types';
-import {getUserByPhone, addUser, removeUser, updateFcmToken, updateUserProfile, resetUserPin} from './firebase';
+import {getUserByPhone, addUser, removeUser, removeInactiveByPhone, updateFcmToken, updateUserProfile, resetUserPin} from './firebase';
 import {hashPin, verifyPin} from './crypto';
 
 const AUTH_KEY = '@openmalo_user';
 
-/** Sign in with Firebase Anonymous Auth to get a valid auth token for Firestore rules. */
-const ensureFirebaseAuth = async () => {
-  try {
-    const {getAuth, signInAnonymously} = require('@react-native-firebase/auth');
-    const auth = getAuth();
-    if (!auth.currentUser) {
-      await signInAnonymously(auth);
-    }
-  } catch {}
-};
-
-/** Store user in AsyncStorage without sensitive fields. */
 const storeUser = async (user: User) => {
   const {pin_hash: _, ...safeUser} = user;
   await AsyncStorage.setItem(AUTH_KEY, JSON.stringify(safeUser));
 };
 
 export const login = async (phone: string, pin: string): Promise<User | null> => {
-  await ensureFirebaseAuth();
   const user = await getUserByPhone(phone);
   if (!user) throw new Error('No account found with this phone number');
   if (!verifyPin(pin, user.pin_hash)) throw new Error('Incorrect PIN');
@@ -55,9 +42,11 @@ export const signup = async (
   pin: string,
   role: 'manager' | 'member' = 'member',
 ): Promise<User> => {
-  await ensureFirebaseAuth();
   const existing = await getUserByPhone(phone);
   if (existing) throw new Error('Phone number already registered');
+
+  // Remove any inactive user with same phone (soft-deleted accounts)
+  await removeInactiveByPhone(phone);
 
   const userData: Omit<User, 'id'> = {
     name: name.trim(),
@@ -92,18 +81,12 @@ export const deleteAccount = async (userId: string): Promise<void> => {
 export const getStoredUser = async (): Promise<User | null> => {
   const data = await AsyncStorage.getItem(AUTH_KEY);
   if (!data) return null;
-  await ensureFirebaseAuth();
   const parsed = JSON.parse(data);
-  // pin_hash is not stored locally; default to empty
   return {...parsed, pin_hash: parsed.pin_hash || ''};
 };
 
 export const logout = async () => {
   await AsyncStorage.removeItem(AUTH_KEY);
-  try {
-    const {getAuth, signOut} = require('@react-native-firebase/auth');
-    await signOut(getAuth());
-  } catch {}
 };
 
 export const updateProfile = async (
@@ -125,7 +108,6 @@ export const changePin = async (
   currentPin: string,
   newPin: string,
 ): Promise<void> => {
-  // Fetch current pin_hash from Firestore (not stored locally)
   const freshUser = await getUserByPhone(user.phone);
   if (!freshUser) throw new Error('User not found');
   if (!verifyPin(currentPin, freshUser.pin_hash)) {
@@ -139,7 +121,6 @@ export const resetForgottenPin = async (
   phone: string,
   newPin: string,
 ): Promise<void> => {
-  await ensureFirebaseAuth();
   const user = await getUserByPhone(phone);
   if (!user) throw new Error('No account found with this phone number');
   const newHash = hashPin(newPin);

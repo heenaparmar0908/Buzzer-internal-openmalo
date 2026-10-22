@@ -1,34 +1,32 @@
+import 'react-native-url-polyfill/auto';
 import {Platform} from 'react-native';
+import {createClient} from '@supabase/supabase-js';
 import {SUPABASE_URL, SUPABASE_ANON_KEY} from '@env';
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
+});
 
 export const VOICE_MAIL_BUCKET = 'voice-mails';
 
 export const uploadVoiceMail = async (filePath: string, fileName: string): Promise<string> => {
-  // Read local file as blob using fetch
   const fileUri = Platform.OS === 'android' ? `file://${filePath}` : filePath;
   const response = await fetch(fileUri);
-  const blob = await response.blob();
+  const arrayBuffer = await response.arrayBuffer();
 
-  // Upload directly to Supabase Storage via REST API
-  const uploadResponse = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${VOICE_MAIL_BUCKET}/${fileName}`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        'apikey': SUPABASE_ANON_KEY,
-        'Content-Type': 'audio/mp4',
-        'x-upsert': 'true',
-      },
-      body: blob,
-    },
-  );
+  const {error} = await supabase.storage
+    .from(VOICE_MAIL_BUCKET)
+    .upload(fileName, arrayBuffer, {
+      contentType: 'audio/mp4',
+      upsert: true,
+    });
 
-  if (!uploadResponse.ok) {
-    const errText = await uploadResponse.text();
-    throw new Error(`Upload failed (${uploadResponse.status}): ${errText}`);
-  }
+  if (error) throw new Error(`Upload failed: ${error.message}`);
 
-  // Return public URL
-  return `${SUPABASE_URL}/storage/v1/object/public/${VOICE_MAIL_BUCKET}/${fileName}`;
+  const {data} = supabase.storage.from(VOICE_MAIL_BUCKET).getPublicUrl(fileName);
+  return data.publicUrl;
 };

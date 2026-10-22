@@ -165,7 +165,7 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
         </View>
         <View style={styles.reasonRow}>
           <Text style={styles.reason}>{buzz.reason}</Text>
-          {buzz.note ? <Text style={styles.note}>{buzz.note}</Text> : null}
+          {buzz.note && buzz.note !== 'null' ? <Text style={styles.note}>{buzz.note}</Text> : null}
         </View>
         <View style={styles.responseRow}>
           <View style={[styles.responseBadge, {backgroundColor: resp.color + '20', borderColor: resp.color + '40'}]}>
@@ -203,7 +203,7 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
         </View>
         <View style={styles.reasonRow}>
           <Text style={styles.reason}>{first.reason}</Text>
-          {first.note ? <Text style={styles.note}>{first.note}</Text> : null}
+          {first.note && first.note !== 'null' ? <Text style={styles.note}>{first.note}</Text> : null}
         </View>
         <View style={styles.groupResponseSummary}>
           {buzzes.map(b => {
@@ -294,11 +294,11 @@ const styles = StyleSheet.create({
   backBtn: {color: '#FF4D4D', fontSize: 22, fontWeight: '700'},
   headerTitle: {color: '#fff', fontSize: 22, fontWeight: '800'},
   periodBadge: {backgroundColor: '#1A1A1A', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12},
-  periodText: {color: '#888', fontSize: 13, fontWeight: '600'},
+  periodText: {color: '#888', fontSize: 18, fontWeight: '600'},
   filterBar: {flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#1A1A1A'},
   filterChip: {paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: '#333', backgroundColor: '#1A1A1A'},
   filterChipActive: {backgroundColor: '#3a1515', borderColor: '#FF4D4D'},
-  filterChipText: {color: '#888', fontSize: 13, fontWeight: '700'},
+  filterChipText: {color: '#888', fontSize: 18, fontWeight: '700'},
   filterChipTextActive: {color: '#FF4D4D'},
   center: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   emptyText: {color: '#999', fontSize: 17},
@@ -307,25 +307,25 @@ const styles = StyleSheet.create({
   cardHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10},
   avatarRow: {flexDirection: 'row', alignItems: 'center'},
   avatar: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#333', alignItems: 'center', justifyContent: 'center'},
-  avatarText: {color: '#fff', fontSize: 15, fontWeight: '700'},
-  arrow: {color: '#888', fontSize: 15, marginHorizontal: 6},
+  avatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
+  arrow: {color: '#888', fontSize: 18, marginHorizontal: 6},
   namesCol: {marginLeft: 10},
-  names: {color: '#fff', fontSize: 16, fontWeight: '700'},
-  time: {color: '#999', fontSize: 13, marginTop: 1},
+  names: {color: '#fff', fontSize: 18, fontWeight: '700'},
+  time: {color: '#999', fontSize: 18, marginTop: 1},
   escalatedBadge: {backgroundColor: '#FF980020', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6},
   escalatedText: {color: '#FF9800', fontSize: 11, fontWeight: '800', letterSpacing: 0.5},
   reasonRow: {marginBottom: 10},
   reason: {color: '#ccc', fontSize: 15},
-  note: {color: '#888', fontSize: 14, fontStyle: 'italic', marginTop: 2},
+  note: {color: '#888', fontSize: 18, fontStyle: 'italic', marginTop: 2},
   responseRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   responseBadge: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1},
-  responseIcon: {fontSize: 15, fontWeight: '700', marginRight: 6},
-  responseLabel: {fontSize: 14, fontWeight: '700'},
+  responseIcon: {fontSize: 18, fontWeight: '700', marginRight: 6},
+  responseLabel: {fontSize: 18, fontWeight: '700'},
   responseTime: {color: '#999', fontSize: 13},
   groupResponseSummary: {gap: 6},
   groupMemberResponse: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4},
-  groupMemberName: {color: '#ccc', fontSize: 14, fontWeight: '600'},
-  groupRespondedCount: {color: '#999', fontSize: 13, textAlign: 'right', marginTop: 4},
+  groupMemberName: {color: '#ccc', fontSize: 18, fontWeight: '600'},
+  groupRespondedCount: {color: '#999', fontSize: 18, textAlign: 'right', marginTop: 4},
   footerLoader: {paddingVertical: 20, alignItems: 'center'},
 });
 

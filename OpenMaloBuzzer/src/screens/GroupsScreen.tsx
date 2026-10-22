@@ -10,9 +10,10 @@ interface Props {
   currentUser: User;
   onBack: () => void;
   onBuzzGroup: (group: Group) => void;
+  initialEditGroup?: Group;
 }
 
-const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
+const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup, initialEditGroup}) => {
   const insets = useSafeAreaInsets();
   const {groups} = useGroups();
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -28,6 +29,15 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
     });
     return unsub;
   }, [currentUser.id]);
+
+  useEffect(() => {
+    if (initialEditGroup) {
+      setEditingGroup(initialEditGroup);
+      setGroupName(initialEditGroup.name);
+      setSelectedIds(new Set(initialEditGroup.member_ids));
+      setShowCreate(true);
+    }
+  }, []);
 
   const toggleMember = (id: string) => {
     setSelectedIds(prev => {
@@ -75,11 +85,18 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
   };
 
   const handleDelete = (group: Group) => {
+    const groupId = group.id;
     setModal({
       visible: true,
       title: 'Delete Group',
       message: `Delete "${group.name}"?`,
-      onConfirm: () => deleteGroup(group.id),
+      onConfirm: () => {
+        deleteGroup(groupId).catch(() => {});
+        setEditingGroup(null);
+        setGroupName('');
+        setSelectedIds(new Set());
+        setShowCreate(false);
+      },
     });
   };
 
@@ -135,6 +152,11 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
               disabled={!groupName.trim() || selectedIds.size < 2}>
               <Text style={styles.createBtnText}>{editingGroup ? 'Save Changes' : 'Create Group'}</Text>
             </TouchableOpacity>
+            {editingGroup && (
+              <TouchableOpacity style={styles.deleteGroupBtn} onPress={() => handleDelete(editingGroup)}>
+                <Text style={styles.deleteGroupBtnText}>Delete Group</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -146,7 +168,7 @@ const GroupsScreen: React.FC<Props> = ({currentUser, onBack, onBuzzGroup}) => {
           </View>
         )}
 
-        {myGroups.map(group => {
+        {!showCreate && myGroups.map(group => {
           const memberNames = group.member_ids
             .map(id => id === currentUser.id ? 'You' : (allUsers.find(u => u.id === id)?.name || 'Unknown'))
             .join(', ');
@@ -208,47 +230,50 @@ const styles = StyleSheet.create({
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12},
   backBtn: {color: '#FF4D4D', fontSize: 20, fontWeight: '700'},
   headerTitle: {color: '#fff', fontSize: 22, fontWeight: '700'},
-  addBtn: {color: '#FF4D4D', fontSize: 16, fontWeight: '600'},
+  addBtn: {color: '#FF4D4D', fontSize: 18, fontWeight: '600'},
   scroll: {flex: 1},
   createForm: {margin: 16, backgroundColor: '#1A1A1A', borderRadius: 16, padding: 16},
-  input: {backgroundColor: '#252525', color: '#fff', fontSize: 17, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10, marginBottom: 12},
-  label: {color: '#888', fontSize: 15, fontWeight: '600', marginBottom: 8},
+  input: {backgroundColor: '#252525', color: '#fff', fontSize: 18, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10, marginBottom: 12},
+  label: {color: '#888', fontSize: 18, fontWeight: '600', marginBottom: 8},
   memberList: {gap: 6, marginBottom: 16},
   memberChip: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#252525', borderRadius: 10, padding: 10, borderWidth: 1.5, borderColor: '#333'},
   memberChipActive: {backgroundColor: '#2a1515', borderColor: '#FF4D4D'},
   memberAvatar: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#333', alignItems: 'center', justifyContent: 'center', marginRight: 10},
   memberAvatarActive: {backgroundColor: '#FF4D4D'},
-  memberAvatarText: {color: '#fff', fontSize: 15, fontWeight: '700'},
-  memberName: {color: '#ccc', fontSize: 16, flex: 1},
+  memberAvatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
+  memberName: {color: '#ccc', fontSize: 18, flex: 1},
   memberNameActive: {color: '#FF4D4D', fontWeight: '600'},
   checkmark: {color: '#FF4D4D', fontSize: 20, fontWeight: '700'},
   createBtn: {backgroundColor: '#FF4D4D', paddingVertical: 14, borderRadius: 10, alignItems: 'center'},
   createBtnDisabled: {opacity: 0.4},
-  createBtnText: {color: '#fff', fontSize: 17, fontWeight: '700'},
+  createBtnText: {color: '#fff', fontSize: 18, fontWeight: '700'},
+  deleteGroupBtn: {backgroundColor: '#F44336', paddingVertical: 14, borderRadius: 10, alignItems: 'center', marginTop: 10},
+  deleteGroupBtnText: {color: '#fff', fontSize: 18, fontWeight: '700'},
   emptyState: {alignItems: 'center', paddingTop: 80},
   emptyIcon: {fontSize: 52, marginBottom: 12},
   emptyText: {color: '#888', fontSize: 19, fontWeight: '600'},
-  emptySubtext: {color: '#999', fontSize: 15, marginTop: 4},
+  emptySubtext: {color: '#999', fontSize: 18, marginTop: 4},
   groupCard: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', marginHorizontal: 16, marginBottom: 8, borderRadius: 14, padding: 14},
+  groupCardCompact: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#1A1A1A', marginHorizontal: 16, marginBottom: 6, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12},
   groupCardMain: {flex: 1, flexDirection: 'row', alignItems: 'center'},
   groupAvatar: {width: 48, height: 48, borderRadius: 24, backgroundColor: '#2a1515', alignItems: 'center', justifyContent: 'center', marginRight: 12},
   groupAvatarText: {fontSize: 24},
   groupInfo: {flex: 1},
-  groupName: {color: '#fff', fontSize: 17, fontWeight: '700'},
-  groupMembers: {color: '#999', fontSize: 14, marginTop: 2},
-  groupCount: {color: '#999', fontSize: 13, marginTop: 2},
+  groupName: {color: '#fff', fontSize: 18, fontWeight: '700'},
+  groupMembers: {color: '#999', fontSize: 18, marginTop: 2},
+  groupCount: {color: '#999', fontSize: 18, marginTop: 2},
   groupActions: {flexDirection: 'row', gap: 12, alignItems: 'center'},
-  editBtn: {color: '#FF9800', fontSize: 15, fontWeight: '600'},
+  editBtn: {color: '#FF9800', fontSize: 18, fontWeight: '600'},
   deleteBtn: {color: '#F44336', fontSize: 20, fontWeight: '700'},
   modalOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32},
   modalBox: {backgroundColor: '#1A1A1A', borderRadius: 20, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#333'},
   modalTitle: {color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 8},
-  modalMessage: {color: '#888', fontSize: 16, textAlign: 'center', marginBottom: 24},
+  modalMessage: {color: '#888', fontSize: 18, textAlign: 'center', marginBottom: 24},
   modalButtons: {flexDirection: 'row', gap: 12, width: '100%'},
   modalCancelBtn: {flex: 1, backgroundColor: '#252525', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#333'},
-  modalCancelText: {color: '#ccc', fontSize: 17, fontWeight: '700'},
+  modalCancelText: {color: '#ccc', fontSize: 18, fontWeight: '700'},
   modalConfirmBtn: {flex: 1, backgroundColor: '#F44336', paddingVertical: 14, borderRadius: 12, alignItems: 'center'},
-  modalConfirmText: {color: '#fff', fontSize: 17, fontWeight: '700'},
+  modalConfirmText: {color: '#fff', fontSize: 18, fontWeight: '700'},
   modalFullBtn: {width: '100%', backgroundColor: '#FF4D4D', paddingVertical: 14, borderRadius: 12, alignItems: 'center'},
 });
 

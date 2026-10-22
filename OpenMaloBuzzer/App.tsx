@@ -34,6 +34,8 @@ function App() {
   const [initialReason, setInitialReason] = useState<string | undefined>(undefined);
   const [autoSend, setAutoSend] = useState(false);
   const [pendingChecked, setPendingChecked] = useState(false);
+  const [homeTab, setHomeTab] = useState<'recent' | 'people' | 'groups' | 'voice'>('recent');
+  const [editGroup, setEditGroup] = useState<Group | null>(null);
   const usersMapRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -80,20 +82,16 @@ function App() {
     if (!user) return;
     const unsubscribe = subscribeToIncomingBuzzes(
       user.id,
-      async (buzz) => {
+      (buzz) => {
         if (AppState.currentState === 'active') {
-          let name = usersMapRef.current[buzz.from_user_id];
-          if (!name) {
-            name = await getUserName(buzz.from_user_id);
-          }
-          const payload: BuzzPayload = {
+          const name = buzz.from_user_name || usersMapRef.current[buzz.from_user_id] || 'User';
+          setIncomingPayload({
             buzz_id: buzz.id,
             from_user_id: buzz.from_user_id,
             from_user_name: name,
             reason: buzz.reason,
             note: buzz.note,
-          };
-          setIncomingPayload(payload);
+          });
         }
         // Background/killed notifications are handled by FCM setBackgroundMessageHandler
       },
@@ -134,6 +132,7 @@ function App() {
     const unsubscribe = setupNotificationListeners(
       (buzzId, response) => { respondToBuzz(buzzId, response as any).catch(() => {}); },
       payload => { setIncomingPayload(payload); },
+      () => { setSelectedUser(null); setScreen('voice-mail'); },
     );
     return unsubscribe;
   }, []);
@@ -158,23 +157,37 @@ function App() {
         if (nav === 'voice_mail') {
           setSelectedUser(null);
           setScreen('voice-mail');
+          setPendingChecked(true);
           return;
         }
         const data = await BuzzerService?.getPendingBuzz?.();
         if (data?.buzz_id) {
-          let pendingName = data.from_user_name;
-          if (!pendingName || pendingName === 'Someone') {
-            pendingName = await getUserName(data.from_user_id);
-          }
+          const immediateName = data.from_user_name && data.from_user_name !== 'Someone'
+            ? data.from_user_name : 'User';
           setIncomingPayload({
             buzz_id: data.buzz_id,
             from_user_id: data.from_user_id,
-            from_user_name: pendingName,
+            from_user_name: immediateName,
             reason: data.reason,
             note: data.note || null,
           });
+          setPendingChecked(true);
+          // Resolve real name in background
+          if (!data.from_user_name || data.from_user_name === 'Someone') {
+            getUserName(data.from_user_id).then(resolvedName => {
+              setIncomingPayload(prev => {
+                if (prev && prev.buzz_id === data.buzz_id) {
+                  return {...prev, from_user_name: resolvedName};
+                }
+                return prev;
+              });
+            }).catch(() => {});
+          }
+          return;
         }
-      } catch {}
+      } catch (err: any) {
+        console.warn('checkPending failed:', err?.message || err);
+      }
       setPendingChecked(true);
     };
     checkPending();
@@ -190,6 +203,7 @@ function App() {
     setSelectedUser(null);
     setSelectedGroup(null);
     setIncomingPayload(null);
+    setPendingChecked(false);
     setAuthScreen('login');
     await logout();
   }, [logout]);
@@ -200,6 +214,7 @@ function App() {
     setSelectedUser(null);
     setSelectedGroup(null);
     setIncomingPayload(null);
+    setPendingChecked(false);
     setAuthScreen('login');
     await deleteAccount();
   }, [deleteAccount]);
@@ -212,7 +227,8 @@ function App() {
   const handleCallUser = useCallback((u: User) => { setSelectedUser(u); setScreen('voice-call'); }, []);
   const handleVoiceMail = useCallback((u?: User) => { setSelectedUser(u || null); setScreen('voice-mail'); }, []);
   const handleBuzzGroup = useCallback((g: Group) => { setSelectedGroup(g); setScreen('group-buzz'); }, []);
-  const handleCloseGroup = useCallback(() => { setSelectedGroup(null); setScreen('home'); }, []);
+  const handleEditGroup = useCallback((g: Group) => { setEditGroup(g); setScreen('groups'); }, []);
+  const handleCloseGroup = useCallback(() => { setSelectedGroup(null); setHomeTab('groups'); setScreen('home'); }, []);
 
   return (
     <SafeAreaProvider>
@@ -242,10 +258,12 @@ function App() {
               onHistory={() => setScreen('history')}
               onGroups={() => setScreen('groups')}
               onBuzzGroup={handleBuzzGroup}
+              onEditGroup={handleEditGroup}
+              initialTab={homeTab}
             />
           )}
           {screen === 'buzz' && selectedUser && <BuzzSheet key={selectedUser.id + (initialReason || '') + (autoSend ? '_auto' : '')} sender={user} receiver={selectedUser} onClose={handleCloseBuzz} initialReason={initialReason} autoSend={autoSend} />}
-          {screen === 'groups' && <GroupsScreen currentUser={user} onBack={() => setScreen('home')} onBuzzGroup={handleBuzzGroup} />}
+          {screen === 'groups' && <GroupsScreen currentUser={user} onBack={() => { setEditGroup(null); setHomeTab('groups'); setScreen('home'); }} onBuzzGroup={handleBuzzGroup} initialEditGroup={editGroup || undefined} />}
           {screen === 'group-buzz' && selectedGroup && <GroupBuzzSheet sender={user} group={selectedGroup} onClose={handleCloseGroup} />}
           {screen === 'voice-call' && selectedUser && <VoiceCallScreen caller={user} receiver={selectedUser} onClose={() => { setSelectedUser(null); setScreen('home'); }} />}
           {screen === 'voice-mail' && <VoiceMailScreen currentUser={user} targetUser={selectedUser || undefined} onBack={() => { setSelectedUser(null); setScreen('home'); }} />}

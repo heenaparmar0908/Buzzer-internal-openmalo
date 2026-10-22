@@ -54,7 +54,19 @@
       "Bash(git config:*)",
       "Bash(grep -v \"SKIPPED\\\\|UP-TO-DATE\\\\|^$\\\\|Incubating\\\\|Deprecated\\\\|warning-mode\\\\|configuration cache\\\\|Gradle documentation\")",
       "Bash(git:*)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(grep -rn ''Someone'' src/ App.tsx firebase/ android/app/src/main/java/ --include=*.ts --include=*.tsx --include=*.js --include=*.kt --include=*.java)",
+      "Bash(grep -v \"=== ''''Someone''''\")",
+      "Bash(./gradlew assembleRelease -s)",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(npx supabase:*)",
+      "Bash(./gradlew --stop)",
+      "Bash(rm -rf /Users/admin/.gradle/caches/)",
+      "Bash(for table:*)",
+      "Bash(do echo:*)",
+      "Bash(done)",
+      "Bash(do curl:*)",
+      "Bash(echo \" $table deleted\")"
     ]
   }
 }

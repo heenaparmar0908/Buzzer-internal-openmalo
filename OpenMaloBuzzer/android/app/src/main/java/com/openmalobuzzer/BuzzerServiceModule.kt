@@ -41,6 +41,23 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun restartService() {
+        val prefs = reactApplicationContext.getSharedPreferences(
+            BuzzerService.PREFS_NAME, android.content.Context.MODE_PRIVATE
+        )
+        val userId = prefs.getString(BuzzerService.PREF_USER_ID, null) ?: return
+        val intent = Intent(reactApplicationContext, BuzzerService::class.java).apply {
+            action = BuzzerService.ACTION_START
+            putExtra(BuzzerService.EXTRA_USER_ID, userId)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            reactApplicationContext.startForegroundService(intent)
+        } else {
+            reactApplicationContext.startService(intent)
+        }
+    }
+
+    @ReactMethod
     fun stopAlarm() {
         val intent = Intent(reactApplicationContext, BuzzerService::class.java).apply {
             action = BuzzerService.ACTION_STOP_ALARM

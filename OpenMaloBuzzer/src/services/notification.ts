@@ -15,7 +15,7 @@ export const createNotificationChannel = async () => {
     visibility: AndroidVisibility.PUBLIC,
     sound: 'buzz_alarm',
     vibration: true,
-    vibrationPattern: [0, 500, 200, 500, 200, 500],
+    vibrationPattern: [300, 500, 200, 500],
     bypassDnd: true,
   });
   // Silent channel — used by notifee notifications (native service handles sound)
@@ -41,7 +41,7 @@ export const showBuzzNotification = async (payload: BuzzPayload) => {
   await notifee.displayNotification({
     id: payload.buzz_id,
     title: `Buzz from ${payload.from_user_name}`,
-    body: payload.reason + (payload.note ? ` — ${payload.note}` : ''),
+    body: payload.reason + (payload.note && payload.note !== 'null' ? ` — ${payload.note}` : ''),
     android: {
       channelId: SILENT_BUZZ_CHANNEL_ID,
       importance: AndroidImportance.HIGH,
@@ -57,7 +57,6 @@ export const showBuzzNotification = async (payload: BuzzPayload) => {
         {title: '5 min', pressAction: {id: 'five_min'}},
         {title: 'Busy', pressAction: {id: 'busy'}},
       ],
-      category: 'buzz' as any,
       ongoing: true,
       autoCancel: false,
     },
@@ -92,6 +91,7 @@ export const cancelBuzzNotification = async (buzzId: string) => {
 export const setupNotificationListeners = (
   onResponse: (buzzId: string, response: string) => void,
   onOpen: (payload: BuzzPayload) => void,
+  onOpenVoiceMail?: () => void,
 ) => {
   return notifee.onForegroundEvent(({type, detail}) => {
     if (type === EventType.ACTION_PRESS && detail.pressAction) {
@@ -103,7 +103,12 @@ export const setupNotificationListeners = (
       }
     }
     if (type === EventType.PRESS && detail.notification?.data) {
-      onOpen(detail.notification.data as unknown as BuzzPayload);
+      const data = detail.notification.data;
+      if (data.type === 'voice_message' && onOpenVoiceMail) {
+        onOpenVoiceMail();
+      } else if (data.buzz_id) {
+        onOpen(data as unknown as BuzzPayload);
+      }
     }
   });
 };

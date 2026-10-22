@@ -6,6 +6,7 @@ import Icon from 'react-native-vector-icons/MaterialIcons';
 import {User, VoiceMail} from '../types';
 import {subscribeToVoiceMails, markVoiceMailListened, deleteVoiceMail, addVoiceMail, subscribeToUsers} from '../services/firebase';
 import {uploadVoiceMail} from '../services/supabase';
+import {sendVoiceMailPush} from '../services/pushNotification';
 
 Sound.setCategory('Playback');
 
@@ -115,7 +116,7 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
       const fileName = `${currentUser.id}_${Date.now()}.m4a`;
       const publicUrl = await uploadVoiceMail(recordedPath, fileName);
 
-      // Save metadata with URL to Firestore
+      // Save metadata with URL to Supabase
       await addVoiceMail({
         from_user_id: currentUser.id,
         from_user_name: currentUser.name,
@@ -125,6 +126,9 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
         created_at: Date.now(),
         listened: false,
       });
+
+      // Send push notification to receiver
+      sendVoiceMailPush(targetUser.id, currentUser.name, recordTime).catch(() => {});
 
       setRecordedPath(null);
       setRecordTime(0);
@@ -438,12 +442,12 @@ const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0D0D0D'},
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12},
   backBtn: {color: '#FF4D4D', fontSize: 20, fontWeight: '700'},
-  selectBtn: {color: '#FF4D4D', fontSize: 14, fontWeight: '600'},
+  selectBtn: {color: '#FF4D4D', fontSize: 18, fontWeight: '600'},
   selectBar: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10},
   selectAllBtn: {flexDirection: 'row', alignItems: 'center', gap: 8},
-  selectAllText: {color: '#ccc', fontSize: 14, fontWeight: '600'},
+  selectAllText: {color: '#ccc', fontSize: 18, fontWeight: '600'},
   deleteSelectedBtn: {flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#3a1010', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8},
-  deleteSelectedText: {color: '#F44336', fontSize: 13, fontWeight: '700'},
+  deleteSelectedText: {color: '#F44336', fontSize: 18, fontWeight: '700'},
   checkbox: {width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#555', alignItems: 'center', justifyContent: 'center', marginRight: 10},
   checkboxSelected: {backgroundColor: '#FF4D4D', borderColor: '#FF4D4D'},
   mailRowSelected: {backgroundColor: '#2a1515'},
@@ -452,19 +456,19 @@ const styles = StyleSheet.create({
   mailRow: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#141414', borderRadius: 12, padding: 12, marginBottom: 8},
   mailRowUnread: {borderLeftWidth: 3, borderLeftColor: '#FF4D4D'},
   mailAvatar: {width: 40, height: 40, borderRadius: 20, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 10},
-  mailAvatarText: {color: '#fff', fontSize: 17, fontWeight: '700'},
+  mailAvatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
   mailContent: {flex: 1},
-  mailFrom: {color: '#fff', fontSize: 14, fontWeight: '600'},
-  mailMeta: {color: '#666', fontSize: 12, marginTop: 2},
+  mailFrom: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  mailMeta: {color: '#666', fontSize: 18, marginTop: 2},
   playBtn: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center', marginLeft: 8},
   playBtnActive: {backgroundColor: '#FF4D4D'},
   deleteMailBtn: {width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', marginLeft: 4},
   unreadDot: {width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF4D4D', position: 'absolute', top: 8, right: 8},
   emptyState: {flex: 1, alignItems: 'center', justifyContent: 'center'},
-  emptyText: {color: '#888', fontSize: 17, fontWeight: '600'},
+  emptyText: {color: '#888', fontSize: 18, fontWeight: '600'},
   recordArea: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20},
   timer: {color: '#fff', fontSize: 52, fontWeight: '200', marginBottom: 8},
-  recordingDot: {color: '#F44336', fontSize: 14, fontWeight: '600', marginBottom: 24},
+  recordingDot: {color: '#F44336', fontSize: 18, fontWeight: '600', marginBottom: 24},
   controls: {alignItems: 'center', marginTop: 16},
   recordButton: {width: 72, height: 72, borderRadius: 36, borderWidth: 3, borderColor: '#FF4D4D', alignItems: 'center', justifyContent: 'center'},
   recordInner: {width: 28, height: 28, borderRadius: 14, backgroundColor: '#FF4D4D'},
@@ -474,21 +478,21 @@ const styles = StyleSheet.create({
   discardBtn: {width: 50, height: 50, borderRadius: 25, backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center'},
   previewBtn: {width: 50, height: 50, borderRadius: 25, backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#4CAF50'},
   sendBtn: {backgroundColor: '#4CAF50', width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center'},
-  hintText: {color: '#444', fontSize: 13, marginTop: 16, textAlign: 'center'},
+  hintText: {color: '#444', fontSize: 18, marginTop: 16, textAlign: 'center'},
   sentState: {alignItems: 'center'},
   sentText: {color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 20},
   sentBtn: {backgroundColor: '#1A1A1A', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10},
-  sentBtnText: {color: '#FF4D4D', fontSize: 14, fontWeight: '600'},
+  sentBtnText: {color: '#FF4D4D', fontSize: 18, fontWeight: '600'},
   modalOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32},
   modalBox: {backgroundColor: '#1A1A1A', borderRadius: 20, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#333'},
   modalIconWrap: {width: 64, height: 64, borderRadius: 32, backgroundColor: '#3a1010', alignItems: 'center', justifyContent: 'center', marginBottom: 16},
   modalTitle: {color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 8},
-  modalMessage: {color: '#888', fontSize: 15, textAlign: 'center', marginBottom: 24, lineHeight: 22},
+  modalMessage: {color: '#888', fontSize: 18, textAlign: 'center', marginBottom: 24, lineHeight: 22},
   modalButtons: {flexDirection: 'row', gap: 12, width: '100%'},
   modalCancelBtn: {flex: 1, backgroundColor: '#252525', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#333'},
-  modalCancelText: {color: '#ccc', fontSize: 16, fontWeight: '700'},
+  modalCancelText: {color: '#ccc', fontSize: 18, fontWeight: '700'},
   modalDeleteBtn: {flex: 1, backgroundColor: '#F44336', paddingVertical: 14, borderRadius: 12, alignItems: 'center'},
-  modalConfirmText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  modalConfirmText: {color: '#fff', fontSize: 18, fontWeight: '700'},
 });
 
 export default VoiceMailScreen;

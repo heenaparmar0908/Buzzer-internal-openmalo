@@ -417,7 +417,7 @@ const styles = StyleSheet.create({
   },
   modalMessage: {
     color: '#888',
-    fontSize: 15,
+    fontSize: 18,
     textAlign: 'center',
     marginBottom: 24,
     lineHeight: 22,
@@ -431,13 +431,13 @@ const styles = StyleSheet.create({
   },
   modalBtnText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
   },
   forgotInput: {
     backgroundColor: '#252525',
     color: '#fff',
-    fontSize: 15,
+    fontSize: 18,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 10,
@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
   },
   forgotCancelText: {
     color: '#ccc',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
   },
   forgotResetBtn: {
@@ -475,7 +475,7 @@ const styles = StyleSheet.create({
   },
   forgotResetText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
   },
 });

@@ -19,9 +19,11 @@ import {User, Group, Buzz, VoiceMail} from '../types';
 import {useUsers} from '../hooks/useUsers';
 import {useGroups} from '../hooks/useGroups';
 import {useReasons} from '../hooks/useReasons';
-import {subscribeToVoiceMails, subscribeToMissedBuzzes, markVoiceMailListened, subscribeToUsers} from '../services/firebase';
+import {subscribeToVoiceMails, subscribeToMissedBuzzes, markVoiceMailListened, deleteVoiceMail, subscribeToUsers} from '../services/firebase';
+import {supabase} from '../services/supabase';
 
 const getFavoritesKey = (userId: string) => `@openmalo_favorites_${userId}`;
+const getLogViewedKey = (userId: string) => `@openmalo_log_viewed_${userId}`;
 
 interface FavoriteEntry {
   userId: string;
@@ -40,9 +42,11 @@ interface Props {
   onHistory: () => void;
   onGroups: () => void;
   onBuzzGroup: (group: Group) => void;
+  onEditGroup: (group: Group) => void;
+  initialTab?: 'recent' | 'people' | 'groups' | 'voice';
 }
 
-const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, onEditBuzz, onCallUser, onVoiceMail, onSettings, onProfile, onHistory, onGroups, onBuzzGroup}) => {
+const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, onEditBuzz, onCallUser, onVoiceMail, onSettings, onProfile, onHistory, onGroups, onBuzzGroup, onEditGroup, initialTab}) => {
   const {users, isOnline, loading} = useUsers(currentUser.id);
   const {groups} = useGroups();
   const reasons = useReasons();
@@ -51,7 +55,7 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
   const [missedBuzzes, setMissedBuzzes] = useState<Buzz[]>([]);
   const [infoGroup, setInfoGroup] = useState<Group | null>(null);
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'recent' | 'people' | 'groups' | 'voice'>('recent');
+  const [activeTab, setActiveTab] = useState<'recent' | 'people' | 'groups' | 'voice'>(initialTab || 'recent');
   const [voiceMails, setVoiceMails] = useState<VoiceMail[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -67,6 +71,8 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
   const [addSelectedReasons, setAddSelectedReasons] = useState<Set<string>>(new Set());
   const [addCustomReason, setAddCustomReason] = useState('');
   const [deleteModal, setDeleteModal] = useState<string | null>(null);
+  const [voiceDeleteId, setVoiceDeleteId] = useState<string | null>(null);
+  const [logCount, setLogCount] = useState(0);
   const reasonsScrollRef = useRef<ScrollView>(null);
 
   // Load favorites from AsyncStorage (per-user)
@@ -87,6 +93,16 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
     pagerRef.current?.scrollTo({x: index * screenWidth, animated: true});
     setActiveTab(tab);
   }, [screenWidth]);
+
+  // Scroll pager to initialTab on mount
+  useEffect(() => {
+    if (initialTab && initialTab !== 'recent') {
+      const index = TABS.indexOf(initialTab);
+      setTimeout(() => {
+        pagerRef.current?.scrollTo({x: index * screenWidth, animated: false});
+      }, 50);
+    }
+  }, []);
 
   const handleSwipe = useCallback((e: any) => {
     const index = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
@@ -155,6 +171,29 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
     const unsub = subscribeToMissedBuzzes(currentUser.id, setMissedBuzzes);
     return unsub;
   }, [currentUser.id]);
+
+  // Log count — count buzzes since last viewed
+  useEffect(() => {
+    const fetchLogCount = async () => {
+      const lastViewed = await AsyncStorage.getItem(getLogViewedKey(currentUser.id));
+      const since = lastViewed ? parseInt(lastViewed, 10) : Date.now();
+      const {count} = await supabase
+        .from('buzzes')
+        .select('*', {count: 'exact', head: true})
+        .or(`from_user_id.eq.${currentUser.id},to_user_id.eq.${currentUser.id}`)
+        .gt('created_at', since);
+      setLogCount(count || 0);
+    };
+    fetchLogCount();
+    const interval = setInterval(fetchLogCount, 30000);
+    return () => clearInterval(interval);
+  }, [currentUser.id]);
+
+  const handleOpenHistory = async () => {
+    await AsyncStorage.setItem(getLogViewedKey(currentUser.id), String(Date.now()));
+    setLogCount(0);
+    onHistory();
+  };
 
   const getGroupMissedCount = (group: Group) =>
     missedBuzzes.filter(b => group.member_ids.includes(b.from_user_id)).length;
@@ -257,7 +296,12 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
       <View style={[styles.header, {paddingTop: insets.top + 8}]}>
         <Text style={styles.title}>Buzzer</Text>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerBtn} onPress={onHistory}><Text style={styles.headerBtnText}>Log</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.headerBtn} onPress={handleOpenHistory}>
+            <Text style={styles.headerBtnText}>Log</Text>
+            {logCount > 0 && (
+              <View style={styles.logBadge}><Text style={styles.logBadgeText}>{logCount}</Text></View>
+            )}
+          </TouchableOpacity>
           {currentUser.role === 'owner' && (
             <TouchableOpacity style={styles.headerBtn} onPress={onSettings}><Text style={styles.headerBtnText}>Settings</Text></TouchableOpacity>
           )}
@@ -270,7 +314,7 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
       {/* Tabs */}
       <View style={styles.tabBar}>
         <TouchableOpacity style={[styles.tab, activeTab === 'recent' && styles.tabActive]} onPress={() => scrollToTab('recent')}>
-          <Text style={[styles.tabText, activeTab === 'recent' && styles.tabTextActive]}>Recent</Text>
+          <Text style={[styles.tabText, activeTab === 'recent' && styles.tabTextActive]}>Favourites</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.tab, activeTab === 'people' && styles.tabActive]} onPress={() => scrollToTab('people')}>
           <Text style={[styles.tabText, activeTab === 'people' && styles.tabTextActive]}>People</Text>
@@ -331,6 +375,11 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
                     <Text style={styles.recentAvatarText}>{name.charAt(0).toUpperCase()}</Text>
                   </View>
                   <Text style={styles.recentCardName}>{name}</Text>
+                  {targetUser && (
+                    <TouchableOpacity style={styles.recentCallBtn} onPress={() => onCallUser(targetUser)}>
+                      <Icon name="call" size={18} color="#4CAF50" />
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity style={styles.recentIconBtn} onPress={() => {
                     if (!targetUser) return;
                     setAddSelectedUser(targetUser);
@@ -451,6 +500,9 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
                   <View style={[styles.voicePlayBtn, isPlaying && styles.voicePlayBtnActive]}>
                     <Icon name={isPlaying ? 'pause' : 'play-arrow'} size={20} color={isPlaying ? '#fff' : '#ccc'} />
                   </View>
+                  <TouchableOpacity style={styles.voiceDeleteBtn} onPress={() => setVoiceDeleteId(mail.id)}>
+                    <Icon name="delete-outline" size={20} color="#666" />
+                  </TouchableOpacity>
                   {!mail.listened && <View style={styles.voiceUnreadDot} />}
                 </TouchableOpacity>
               );
@@ -489,6 +541,12 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
                 );
               })}
             </ScrollView>
+            {infoGroup && infoGroup.created_by === currentUser.id && (currentUser.role === 'owner' || currentUser.role === 'manager') && (
+              <TouchableOpacity style={styles.modalEditBtn} onPress={() => { setInfoGroup(null); onEditGroup(infoGroup); }}>
+                <Icon name="edit" size={18} color="#fff" />
+                <Text style={styles.modalEditBtnText}>Edit Group</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
@@ -603,6 +661,30 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
           </View>
         </View>
       </Modal>
+
+      {/* Voice Delete Confirm Modal */}
+      <Modal visible={!!voiceDeleteId} transparent animationType="fade" onRequestClose={() => setVoiceDeleteId(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.deleteModalBox}>
+            <Text style={styles.deleteModalTitle}>Delete Voice Message</Text>
+            <Text style={styles.deleteModalMsg}>Delete this voice message?</Text>
+            <View style={styles.deleteModalBtns}>
+              <TouchableOpacity style={styles.deleteModalCancel} onPress={() => setVoiceDeleteId(null)}>
+                <Text style={styles.deleteModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.deleteModalConfirm} onPress={() => {
+                if (voiceDeleteId) {
+                  if (playingId === voiceDeleteId) { soundRef.current?.stop(); soundRef.current?.release(); soundRef.current = null; setPlayingId(null); }
+                  deleteVoiceMail(voiceDeleteId).catch(() => {});
+                }
+                setVoiceDeleteId(null);
+              }}>
+                <Text style={styles.deleteModalConfirmText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -613,45 +695,48 @@ const styles = StyleSheet.create({
   header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12},
   title: {fontSize: 28, fontWeight: '800', color: '#FF4D4D'},
   headerRight: {flexDirection: 'row', gap: 8, alignItems: 'center'},
-  headerBtn: {backgroundColor: '#1A1A1A', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8},
-  headerBtnText: {color: '#aaa', fontSize: 15, fontWeight: '600'},
+  headerBtn: {backgroundColor: '#1A1A1A', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 4},
+  headerBtnText: {color: '#aaa', fontSize: 18, fontWeight: '600'},
+  logBadge: {backgroundColor: '#FF4D4D', minWidth: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4},
+  logBadgeText: {color: '#fff', fontSize: 10, fontWeight: '800'},
   profileBtn: {width: 36, height: 36, borderRadius: 18, backgroundColor: '#FF4D4D', alignItems: 'center', justifyContent: 'center'},
-  profileText: {color: '#fff', fontSize: 16, fontWeight: '800'},
+  profileText: {color: '#fff', fontSize: 18, fontWeight: '800'},
 
   tabBar: {flexDirection: 'row', paddingHorizontal: 12, marginBottom: 8, gap: 6},
   tab: {flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: '#1A1A1A', flexDirection: 'row', justifyContent: 'center', gap: 4},
   tabActive: {backgroundColor: '#1a2a3a', borderWidth: 1, borderColor: '#64B5F6'},
-  tabText: {color: '#888', fontSize: 14, fontWeight: '600'},
+  tabText: {color: '#888', fontSize: 18, fontWeight: '600'},
   tabTextActive: {color: '#64B5F6', fontWeight: '700'},
   tabBadge: {backgroundColor: '#FF4D4D', minWidth: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4},
   tabBadgeText: {color: '#fff', fontSize: 10, fontWeight: '800'},
 
   searchBar: {flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', marginHorizontal: 16, borderRadius: 10, paddingHorizontal: 12, height: 42, gap: 8, marginBottom: 12},
-  searchInput: {flex: 1, color: '#fff', fontSize: 15, padding: 0},
+  searchInput: {flex: 1, color: '#fff', fontSize: 18, padding: 0},
 
   // Recent tab
   addFavBtn: {flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4, marginBottom: 12, padding: 14, backgroundColor: '#1A1A1A', borderRadius: 12, borderWidth: 1, borderColor: '#333', borderStyle: 'dashed'},
-  addFavBtnText: {color: '#64B5F6', fontSize: 16, fontWeight: '700'},
+  addFavBtnText: {color: '#64B5F6', fontSize: 18, fontWeight: '700'},
 
   recentCard: {backgroundColor: '#1A1A1A', borderRadius: 14, marginBottom: 10, padding: 14, borderWidth: 1, borderColor: '#252525'},
   recentCardHeader: {flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4},
-  recentCardName: {color: '#fff', fontSize: 16, fontWeight: '700', flex: 1},
+  recentCardName: {color: '#fff', fontSize: 18, fontWeight: '700', flex: 1},
+  recentCallBtn: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#1a3a1a', alignItems: 'center', justifyContent: 'center'},
   recentIconBtn: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center'},
   recentReasonRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 4, borderTopWidth: 1, borderTopColor: '#252525'},
-  recentReasonText: {color: '#ccc', fontSize: 14, fontWeight: '500', flex: 1},
+  recentReasonText: {color: '#ccc', fontSize: 18, fontWeight: '500', flex: 1},
   recentBuzzBtn: {paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6, backgroundColor: '#1a3a1a'},
-  recentBuzzBtnText: {color: '#4CAF50', fontSize: 13, fontWeight: '700'},
-  recentUnavailableText: {color: '#555', fontSize: 12, fontWeight: '600'},
+  recentBuzzBtnText: {color: '#4CAF50', fontSize: 18, fontWeight: '700'},
+  recentUnavailableText: {color: '#555', fontSize: 18, fontWeight: '600'},
   recentAvatar: {width: 38, height: 38, borderRadius: 19, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center'},
-  recentAvatarText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  recentAvatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
 
   // Groups
   groupRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10},
   groupRowLeft: {flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1},
   groupAvatar: {width: 42, height: 42, borderRadius: 21, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center'},
   groupRowInfo: {flex: 1},
-  groupRowName: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  groupRowCount: {color: '#999', fontSize: 13, marginTop: 1},
+  groupRowName: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  groupRowCount: {color: '#999', fontSize: 18, marginTop: 1},
 
   // People
   userRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10},
@@ -663,34 +748,36 @@ const styles = StyleSheet.create({
   dotOn: {backgroundColor: '#4CAF50'},
   dotOff: {backgroundColor: '#444'},
   userInfo: {flex: 1},
-  userName: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  userRole: {color: '#999', fontSize: 13, marginTop: 1, textTransform: 'capitalize'},
+  userName: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  userRole: {color: '#999', fontSize: 18, marginTop: 1, textTransform: 'capitalize'},
   userActions: {flexDirection: 'row', gap: 6, alignItems: 'center'},
   callBtn: {width: 36, height: 36, borderRadius: 18, backgroundColor: '#1a3a1a', alignItems: 'center', justifyContent: 'center'},
   vmBtn: {width: 36, height: 36, borderRadius: 18, backgroundColor: '#2a1515', alignItems: 'center', justifyContent: 'center'},
   buzzBtn: {backgroundColor: '#4CAF50', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8},
-  buzzBtnText: {color: '#fff', fontSize: 14, fontWeight: '700'},
+  buzzBtnText: {color: '#fff', fontSize: 18, fontWeight: '700'},
 
   badge: {backgroundColor: '#FF4D4D', minWidth: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5},
-  badgeText: {color: '#fff', fontSize: 12, fontWeight: '800'},
+  badgeText: {color: '#fff', fontSize: 18, fontWeight: '800'},
   groupActions: {flexDirection: 'row', gap: 8, alignItems: 'center'},
   groupInfoBtn: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center'},
   createGroupBtn: {flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginHorizontal: 16, marginTop: 8, marginBottom: 12, padding: 14, backgroundColor: '#1A1A1A', borderRadius: 12, borderWidth: 1, borderColor: '#333', borderStyle: 'dashed'},
-  createGroupBtnText: {color: '#64B5F6', fontSize: 16, fontWeight: '700'},
+  createGroupBtnText: {color: '#64B5F6', fontSize: 18, fontWeight: '700'},
 
   // Modals
   modalOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32},
   modalBox: {backgroundColor: '#1A1A1A', borderRadius: 20, padding: 20, width: '100%', maxHeight: '60%', borderWidth: 1, borderColor: '#333'},
   modalHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4},
   modalTitle: {color: '#fff', fontSize: 22, fontWeight: '800'},
-  modalSubtitle: {color: '#888', fontSize: 14, marginBottom: 16},
+  modalSubtitle: {color: '#888', fontSize: 18, marginBottom: 16},
   memberList: {maxHeight: 300},
   memberRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#252525'},
   memberAvatar: {width: 38, height: 38, borderRadius: 19, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12},
-  memberAvatarText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  memberAvatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
   memberInfo: {flex: 1},
-  memberName: {color: '#fff', fontSize: 15, fontWeight: '600'},
-  memberRole: {color: '#999', fontSize: 13, textTransform: 'capitalize'},
+  memberName: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  memberRole: {color: '#999', fontSize: 18, textTransform: 'capitalize'},
+  modalEditBtn: {flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#FF9800', paddingVertical: 12, borderRadius: 12, marginTop: 12},
+  modalEditBtnText: {color: '#fff', fontSize: 18, fontWeight: '700'},
 
   // Voice
   voiceRow: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#1A1A1A'},
@@ -698,44 +785,45 @@ const styles = StyleSheet.create({
   voiceAvatar: {width: 44, height: 44, borderRadius: 22, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12},
   voiceAvatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
   voiceInfo: {flex: 1},
-  voiceName: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  voiceMeta: {color: '#999', fontSize: 13, marginTop: 2},
+  voiceName: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  voiceMeta: {color: '#999', fontSize: 18, marginTop: 2},
   voicePlayBtn: {width: 36, height: 36, borderRadius: 18, backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center'},
   voicePlayBtnActive: {backgroundColor: '#FF4D4D'},
+  voiceDeleteBtn: {width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginLeft: 4},
   voiceUnreadDot: {width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF4D4D', position: 'absolute', top: 10, right: 10},
 
   // Add Modal
   addModalOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end'},
   addModalSheet: {backgroundColor: '#1A1A1A', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 16, paddingHorizontal: 20, minHeight: '60%', maxHeight: '85%'},
   addModalHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16},
-  addModalBack: {color: '#FF4D4D', fontSize: 16, fontWeight: '600'},
+  addModalBack: {color: '#FF4D4D', fontSize: 18, fontWeight: '600'},
   addModalTitle: {color: '#fff', fontSize: 18, fontWeight: '800'},
   addPersonRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#252525'},
   addPersonAvatar: {width: 40, height: 40, borderRadius: 20, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', marginRight: 12},
-  addPersonAvatarText: {color: '#fff', fontSize: 17, fontWeight: '700'},
-  addPersonName: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  addPersonRole: {color: '#999', fontSize: 13, textTransform: 'capitalize'},
-  addReasonLabel: {color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 14},
-  addReasonSectionLabel: {color: '#666', fontSize: 12, fontWeight: '700', letterSpacing: 1, marginTop: 16, marginBottom: 8},
+  addPersonAvatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
+  addPersonName: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  addPersonRole: {color: '#999', fontSize: 18, textTransform: 'capitalize'},
+  addReasonLabel: {color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 14},
+  addReasonSectionLabel: {color: '#666', fontSize: 18, fontWeight: '700', letterSpacing: 1, marginTop: 16, marginBottom: 8},
   addReasonRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 14, backgroundColor: '#252525', borderRadius: 10, marginBottom: 6},
   addReasonRowActive: {backgroundColor: '#2a1515', borderWidth: 1, borderColor: '#FF4D4D'},
   addReasonText: {color: '#ccc', fontSize: 15},
   addReasonTextActive: {color: '#FF4D4D', fontWeight: '600'},
   addCustomRow: {flexDirection: 'row', gap: 10, marginBottom: 12},
-  addCustomInput: {flex: 1, backgroundColor: '#252525', color: '#fff', fontSize: 16, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, borderWidth: 1, borderColor: '#444'},
+  addCustomInput: {flex: 1, backgroundColor: '#252525', color: '#fff', fontSize: 18, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12, borderWidth: 1, borderColor: '#444'},
   addCustomBtn: {backgroundColor: '#FF4D4D', width: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center'},
   addSaveBtn: {backgroundColor: '#4CAF50', paddingVertical: 14, borderRadius: 12, alignItems: 'center'},
-  addSaveBtnText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  addSaveBtnText: {color: '#fff', fontSize: 18, fontWeight: '700'},
 
   // Delete Modal
   deleteModalBox: {backgroundColor: '#1A1A1A', borderRadius: 20, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#333'},
   deleteModalTitle: {color: '#fff', fontSize: 20, fontWeight: '800', marginBottom: 8},
-  deleteModalMsg: {color: '#888', fontSize: 15, textAlign: 'center', marginBottom: 24},
+  deleteModalMsg: {color: '#888', fontSize: 18, textAlign: 'center', marginBottom: 24},
   deleteModalBtns: {flexDirection: 'row', gap: 12, width: '100%'},
   deleteModalCancel: {flex: 1, backgroundColor: '#252525', paddingVertical: 14, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#333'},
-  deleteModalCancelText: {color: '#ccc', fontSize: 16, fontWeight: '700'},
+  deleteModalCancelText: {color: '#ccc', fontSize: 18, fontWeight: '700'},
   deleteModalConfirm: {flex: 1, backgroundColor: '#F44336', paddingVertical: 14, borderRadius: 12, alignItems: 'center'},
-  deleteModalConfirmText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  deleteModalConfirmText: {color: '#fff', fontSize: 18, fontWeight: '700'},
 
   center: {flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60},
   emptyText: {color: '#999', fontSize: 16},

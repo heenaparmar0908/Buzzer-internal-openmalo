@@ -4,6 +4,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {BuzzPayload, BuzzResponse, Buzz} from '../types';
 import {respondToBuzz, subscribeToBuzz} from '../services/firebase';
 import {cancelBuzzNotification} from '../services/notification';
+import {NO_RESPONSE_TIMEOUT_MS} from '../constants';
 
 interface Props {
   payload: BuzzPayload;
@@ -13,10 +14,10 @@ interface Props {
 const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
   const insets = useSafeAreaInsets();
 
-  // Listen for cancellation by sender
+  // Listen for response changes (sender cancelled, or already responded from notification)
   useEffect(() => {
     const unsub = subscribeToBuzz(payload.buzz_id, (buzz: Buzz) => {
-      if (buzz.response === 'cancelled') {
+      if (buzz.response !== 'none') {
         NativeModules.BuzzerService?.stopAlarm();
         cancelBuzzNotification(payload.buzz_id);
         onDismiss();
@@ -32,6 +33,17 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
       NativeModules.BuzzerService?.stopAlarm();
     };
   }, []);
+
+  // Auto-dismiss after 2 minutes if no response
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      NativeModules.BuzzerService?.stopAlarm();
+      respondToBuzz(payload.buzz_id, 'dismissed').catch(() => {});
+      cancelBuzzNotification(payload.buzz_id).catch(() => {});
+      onDismiss();
+    }, NO_RESPONSE_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [payload.buzz_id, onDismiss]);
 
   const handleResponse = async (response: BuzzResponse) => {
     NativeModules.BuzzerService?.stopAlarm();
@@ -51,7 +63,7 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
 
         <Text style={styles.fromName}>{payload.from_user_name}</Text>
         <Text style={styles.reason}>{payload.reason}</Text>
-        {payload.note && <Text style={styles.note}>{payload.note}</Text>}
+        {!!payload.note && payload.note !== 'null' && <Text style={styles.note}>{payload.note}</Text>}
       </View>
 
       <View style={[styles.buttons, {paddingBottom: insets.bottom + 20}]}>
@@ -129,7 +141,7 @@ const styles = StyleSheet.create({
   },
   note: {
     color: '#999',
-    fontSize: 16,
+    fontSize: 18,
     textAlign: 'center',
   },
   buttons: {
@@ -158,7 +170,7 @@ const styles = StyleSheet.create({
   },
   responseBtnSub: {
     color: 'rgba(255,255,255,0.7)',
-    fontSize: 13,
+    fontSize: 18,
     marginTop: 2,
   },
 });

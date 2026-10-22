@@ -12,7 +12,6 @@ import {
 } from '../services/auth';
 import {updateLastSeen, updateFcmToken, getFcmToken} from '../services/firebase';
 
-/** Fetch current FCM token and write it to Firestore. */
 const refreshFcmToken = async (userId: string) => {
   try {
     const token = await getFcmToken();
@@ -45,7 +44,7 @@ export const useAuth = () => {
     return () => sub.remove();
   }, [user]);
 
-  // Listen for FCM token rotation and update Firestore immediately
+  // Listen for FCM token rotation and update Supabase immediately
   useEffect(() => {
     if (!user) return;
     try {
@@ -55,7 +54,9 @@ export const useAuth = () => {
         if (newToken) await updateFcmToken(user.id, newToken).catch(() => {});
       });
       return unsub;
-    } catch {}
+    } catch (err: any) {
+      console.warn('FCM onTokenRefresh setup failed:', err?.message || err);
+    }
   }, [user]);
 
   useEffect(() => {

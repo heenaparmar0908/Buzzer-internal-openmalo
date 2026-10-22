@@ -116,7 +116,7 @@ const styles = StyleSheet.create({
   avatar: {width: 120, height: 120, borderRadius: 60, backgroundColor: '#4CAF50', alignItems: 'center', justifyContent: 'center', marginBottom: 24},
   avatarText: {color: '#fff', fontSize: 52, fontWeight: '800'},
   name: {color: '#fff', fontSize: 28, fontWeight: '800', marginBottom: 8},
-  status: {color: '#888', fontSize: 16, marginBottom: 4},
+  status: {color: '#888', fontSize: 18, marginBottom: 4},
   timer: {color: '#666', fontSize: 32, fontWeight: '300', marginTop: 8},
   actions: {paddingHorizontal: 20, gap: 12},
   endCallBtn: {backgroundColor: '#F44336', paddingVertical: 20, borderRadius: 16, alignItems: 'center'},
@@ -124,7 +124,7 @@ const styles = StyleSheet.create({
   callAgainBtn: {backgroundColor: '#4CAF50', paddingVertical: 18, borderRadius: 16, alignItems: 'center'},
   callAgainText: {color: '#fff', fontSize: 18, fontWeight: '700'},
   closeBtn: {backgroundColor: '#1A1A1A', paddingVertical: 16, borderRadius: 16, alignItems: 'center'},
-  closeBtnText: {color: '#ccc', fontSize: 16, fontWeight: '600'},
+  closeBtnText: {color: '#ccc', fontSize: 18, fontWeight: '600'},
 });
 
 export default VoiceCallScreen;
