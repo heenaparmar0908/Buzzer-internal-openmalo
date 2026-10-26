@@ -16,16 +16,20 @@ class BootReceiver : BroadcastReceiver() {
             val userId = prefs.getString(BuzzerService.PREF_USER_ID, null)
 
             if (userId != null) {
-                val serviceIntent = Intent(context, BuzzerService::class.java).apply {
-                    action = BuzzerService.ACTION_START
-                    putExtra(BuzzerService.EXTRA_USER_ID, userId)
+                try {
+                    val serviceIntent = Intent(context, BuzzerService::class.java).apply {
+                        action = BuzzerService.ACTION_START
+                        putExtra(BuzzerService.EXTRA_USER_ID, userId)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(serviceIntent)
+                    } else {
+                        context.startService(serviceIntent)
+                    }
+                    Log.d("BootReceiver", "BuzzerService restarted for userId: $userId")
+                } catch (e: Exception) {
+                    Log.e("BootReceiver", "Failed to restart BuzzerService: ${e.message}")
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(serviceIntent)
-                } else {
-                    context.startService(serviceIntent)
-                }
-                Log.d("BootReceiver", "BuzzerService restarted for userId: $userId")
             } else {
                 Log.d("BootReceiver", "No saved userId — skipping service restart")
             }

@@ -62,8 +62,16 @@ export const useAuth = () => {
   useEffect(() => {
     if (!user) return;
     updateLastSeen(user.id).catch(() => {});
-    const interval = setInterval(() => updateLastSeen(user.id).catch(() => {}), 15000);
-    return () => clearInterval(interval);
+    let interval: ReturnType<typeof setInterval> | null = setInterval(() => updateLastSeen(user.id).catch(() => {}), 15000);
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active') {
+        updateLastSeen(user.id).catch(() => {});
+        if (!interval) interval = setInterval(() => updateLastSeen(user.id).catch(() => {}), 15000);
+      } else {
+        if (interval) { clearInterval(interval); interval = null; }
+      }
+    });
+    return () => { if (interval) clearInterval(interval); sub.remove(); };
   }, [user]);
 
   const login = useCallback(async (phone: string, pin: string) => {

@@ -15,7 +15,7 @@ export const sendBuzzPush = async (
     const fcmToken = tokenData?.fcm_token;
     if (!fcmToken) return;
 
-    await fetch(`${SUPABASE_URL}/functions/v1/send-notification`, {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/send-notification`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
@@ -33,6 +33,19 @@ export const sendBuzzPush = async (
         },
       }),
     });
+    // If the Edge Function reports the token is invalid, mark it stale
+    // so the sender-side UI can show a warning in the future.
+    if (res.ok) {
+      try {
+        const body = await res.json();
+        if (body?.error?.code === 'messaging/registration-token-not-registered' ||
+            body?.error?.code === 'messaging/invalid-registration-token') {
+          await supabase.from('user_tokens')
+            .update({fcm_token_stale: true})
+            .eq('user_id', toUserId);
+        }
+      } catch {}
+    }
   } catch (e: any) {
     console.warn('sendBuzzPush failed:', e?.message || e);
   }

@@ -66,7 +66,28 @@
       "Bash(do echo:*)",
       "Bash(done)",
       "Bash(do curl:*)",
-      "Bash(echo \" $table deleted\")"
+      "Bash(echo \" $table deleted\")",
+      "Bash(grep -r setupBackgroundHandler /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/src --include=*.ts*)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb kill-server:*)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb start-server:*)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 shell \"dumpsys activity services -p com.openmalobuzzer\" 2>&1)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 shell \"logcat -d -t 200 | grep -i -E 'BuzzerService|buzzer_prefs|startService|ForegroundService'\" 2>&1)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 shell \"logcat -d\")",
+      "Bash(./gradlew app:compileDebugKotlin)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5558 shell \"logcat -d\")",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5558 shell \"dumpsys activity services -p com.openmalobuzzer\")",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5558 shell \"logcat -c\")",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb devices:*)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5558 shell \"run-as com.openmalobuzzer sqlite3 /data/data/com.openmalobuzzer/databases/AsyncStorage \\\\\"SELECT key, value FROM Storage WHERE key LIKE '%openmalo%';\\\\\"\" 2>&1)",
+      "Bash(ffmpeg -version)",
+      "Bash(sox --version)",
+      "Bash(APK=\"/Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/android/app/build/outputs/apk/release/app-release.apk\")",
+      "Bash(__NEW_LINE_fb8f7f6f9da15d4c__ echo:*)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5554 uninstall com.openmalobuzzer)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5554 install \"$APK\")",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 uninstall com.openmalobuzzer)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 shell pm uninstall com.openmalobuzzer)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 install /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/android/app/build/outputs/apk/release/app-release.apk)"
     ]
   }
 }

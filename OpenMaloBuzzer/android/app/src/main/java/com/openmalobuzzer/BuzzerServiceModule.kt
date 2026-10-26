@@ -58,6 +58,29 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun showBuzz(buzzId: String, fromUserId: String, fromUserName: String, reason: String, note: String?, promise: Promise) {
+        try {
+            val intent = Intent(reactApplicationContext, BuzzerService::class.java).apply {
+                action = BuzzerService.ACTION_SHOW_BUZZ
+                putExtra(BuzzerService.EXTRA_BUZZ_ID, buzzId)
+                putExtra(BuzzerService.EXTRA_FROM_USER_ID, fromUserId)
+                putExtra(BuzzerService.EXTRA_FROM_USER_NAME, fromUserName)
+                putExtra(BuzzerService.EXTRA_REASON, reason)
+                putExtra(BuzzerService.EXTRA_NOTE, note ?: "")
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                reactApplicationContext.startForegroundService(intent)
+            } else {
+                reactApplicationContext.startService(intent)
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e("BuzzerServiceModule", "showBuzz failed: ${e.message}")
+            promise.resolve(false)
+        }
+    }
+
+    @ReactMethod
     fun stopAlarm() {
         val intent = Intent(reactApplicationContext, BuzzerService::class.java).apply {
             action = BuzzerService.ACTION_STOP_ALARM
@@ -280,6 +303,97 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
             mediaRecorder?.release()
             mediaRecorder = null
             promise.reject("RECORDING_ERROR", e.message)
+        }
+    }
+
+    // ─── Service Health Check ────────────────────────────────
+
+    @ReactMethod
+    fun isServiceHealthy(promise: Promise) {
+        val healthy = BuzzerService.isServiceHealthy(reactApplicationContext)
+        promise.resolve(healthy)
+    }
+
+    /**
+     * Checks if the service is alive. If not, restarts it and returns false.
+     * The JS side can use this on foreground resume to auto-recover from OEM kills.
+     */
+    @ReactMethod
+    fun checkAndRecoverService(promise: Promise) {
+        val healthy = BuzzerService.isServiceHealthy(reactApplicationContext)
+        if (!healthy) {
+            val prefs = reactApplicationContext.getSharedPreferences(
+                BuzzerService.PREFS_NAME, android.content.Context.MODE_PRIVATE
+            )
+            val userId = prefs.getString(BuzzerService.PREF_USER_ID, null)
+            if (userId != null) {
+                Log.d("BuzzerServiceModule", "Service not healthy — restarting for $userId")
+                val intent = Intent(reactApplicationContext, BuzzerService::class.java).apply {
+                    action = BuzzerService.ACTION_START
+                    putExtra(BuzzerService.EXTRA_USER_ID, userId)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    reactApplicationContext.startForegroundService(intent)
+                } else {
+                    reactApplicationContext.startService(intent)
+                }
+            }
+        }
+        promise.resolve(healthy)
+    }
+
+    @ReactMethod
+    fun cancelBuzzNotification(buzzId: String) {
+        val nm = reactApplicationContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        nm.cancel(buzzId.hashCode())
+        nm.cancel(buzzId, 0)
+        for (n in nm.activeNotifications) {
+            if (n.tag == buzzId) nm.cancel(n.tag, n.id)
+        }
+    }
+
+    // ─── OEM Battery Optimization ───────────────────────────
+
+    @ReactMethod
+    fun getBatteryInfo(promise: Promise) {
+        try {
+            val ctx = reactApplicationContext
+            val oem = OemBatteryHelper.detectOem()
+            val instructions = OemBatteryHelper.getInstructions()
+            val map = Arguments.createMap().apply {
+                putString("oem", oem.name)
+                putString("oemName", instructions.oemName)
+                putString("steps", instructions.steps)
+                putBoolean("hasAutostart", instructions.hasAutostart)
+                putBoolean("needsManualStep", instructions.needsManualStep)
+                putBoolean("isIgnoringBatteryOptimizations",
+                    OemBatteryHelper.isIgnoringBatteryOptimizations(ctx))
+                putString("manufacturer", android.os.Build.MANUFACTURER)
+                putString("model", android.os.Build.MODEL)
+            }
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("BATTERY_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun requestBatteryExemption(promise: Promise) {
+        try {
+            val result = OemBatteryHelper.requestBatteryOptimizationExemption(reactApplicationContext)
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("BATTERY_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun openOemBatterySettings(promise: Promise) {
+        try {
+            val result = OemBatteryHelper.openOemBatterySettings(reactApplicationContext)
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("BATTERY_ERROR", e.message)
         }
     }
 }

@@ -57,7 +57,13 @@ function App() {
       promptBatteryOptimization();
       setTimeout(() => promptDndAccess(), 2000);
       const sub = AppState.addEventListener('change', (state) => {
-        if (state === 'active') BuzzerService?.startService(user.id);
+        if (state === 'active') {
+          // Use health check: only restarts the service if OEM killed it
+          BuzzerService?.checkAndRecoverService?.().catch(() => {
+            // Fallback if health check not available
+            BuzzerService?.startService(user.id);
+          });
+        }
       });
       return () => sub.remove();
     }

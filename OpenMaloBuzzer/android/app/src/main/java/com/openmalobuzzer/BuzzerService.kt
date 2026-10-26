@@ -3,6 +3,7 @@ package com.openmalobuzzer
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -39,16 +40,29 @@ class BuzzerService : Service() {
         const val ACTION_STOP = "com.openmalobuzzer.STOP_SERVICE"
         const val ACTION_STOP_ALARM = "com.openmalobuzzer.STOP_ALARM"
         const val ACTION_RESPOND = "com.openmalobuzzer.RESPOND"
+        const val ACTION_SHOW_BUZZ = "com.openmalobuzzer.SHOW_BUZZ"
         const val EXTRA_USER_ID = "user_id"
         const val EXTRA_BUZZ_ID = "buzz_id"
         const val EXTRA_RESPONSE = "response"
+        const val EXTRA_FROM_USER_ID = "from_user_id"
+        const val EXTRA_FROM_USER_NAME = "from_user_name"
+        const val EXTRA_REASON = "reason"
+        const val EXTRA_NOTE = "note"
         const val BUZZ_CHANNEL_ID = "openmalo_buzz"
         const val VOICEMAIL_CHANNEL_ID = "openmalo_voicemail"
         const val PREFS_NAME = "buzzer_prefs"
         const val PREF_USER_ID = "active_user_id"
+        const val PREF_LAST_HEARTBEAT = "last_heartbeat"
         const val POLL_INTERVAL_MS = 10000L
         const val FCM_TOKEN_REFRESH_MS = 3600000L
         val RESTART_RETRY_DELAYS = longArrayOf(3000L, 10000L, 30000L, 60000L)
+
+        /** Check if service has been alive recently (heartbeat within last 30s). */
+        fun isServiceHealthy(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val lastHeartbeat = prefs.getLong(PREF_LAST_HEARTBEAT, 0)
+            return System.currentTimeMillis() - lastHeartbeat < 30000
+        }
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -59,8 +73,7 @@ class BuzzerService : Service() {
     private var originalRingerMode: Int = -1
     private var originalDndMode: Int = -1
     private var activeBuzzId: String? = null
-    private val seenBuzzIds = mutableSetOf<String>()
-    private val seenVoiceMailIds = mutableSetOf<String>()
+    private val seenBuzzIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val handler = Handler(Looper.getMainLooper())
     private var currentUserId: String? = null
     private var restartAttempt = 0
@@ -69,6 +82,9 @@ class BuzzerService : Service() {
     private val pollRunnable = object : Runnable {
         override fun run() {
             currentUserId?.let { pollForBuzzes(it) }
+            // Write heartbeat so the app can detect if the service was killed by OEM
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putLong(PREF_LAST_HEARTBEAT, System.currentTimeMillis()).apply()
             handler.postDelayed(this, POLL_INTERVAL_MS)
         }
     }
@@ -130,6 +146,55 @@ class BuzzerService : Service() {
             return START_STICKY
         }
 
+        if (action == ACTION_SHOW_BUZZ) {
+            // Ensure service is in foreground (needed if service was just started from dead state)
+            acquireWakeLock()
+            val fgNotification = buildNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(NOTIFICATION_ID, fgNotification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIFICATION_ID, fgNotification)
+            }
+
+            // Start polling if not already running
+            val savedUserId = getSavedUserId()
+            if (savedUserId != null && currentUserId != savedUserId) {
+                Log.d(TAG, "Starting polling from SHOW_BUZZ for userId: $savedUserId")
+                currentUserId = savedUserId
+                preloadUserNames()
+                startPolling()
+                cancelRestartAlarm()
+            }
+
+            val buzzId = intent?.getStringExtra(EXTRA_BUZZ_ID)
+            val fromUserId = intent?.getStringExtra(EXTRA_FROM_USER_ID) ?: ""
+            val fromUserName = intent?.getStringExtra(EXTRA_FROM_USER_NAME)
+            val reason = intent?.getStringExtra(EXTRA_REASON) ?: ""
+            val note = intent?.getStringExtra(EXTRA_NOTE)?.let { if (it.isEmpty() || it == "null") null else it }
+            if (buzzId != null && !seenBuzzIds.contains(buzzId)) {
+                Log.d(TAG, "Buzz delivered via FCM push: $buzzId")
+                seenBuzzIds.add(buzzId)
+                // Cache sender name from FCM data so notification shows instantly
+                if (!fromUserName.isNullOrEmpty() && fromUserName != "User") {
+                    userNameCache[fromUserId] = fromUserName
+                }
+                stopAlarm()
+                activeBuzzId = buzzId
+                showBuzzNotification(buzzId, fromUserId, reason, note)
+                startAlarm()
+                handler.postDelayed({
+                    if (activeBuzzId == buzzId) {
+                        Log.d(TAG, "Auto-dismissing buzz $buzzId after 2 min timeout")
+                        stopAlarm()
+                        cancelAllNotificationsForBuzz(buzzId)
+                        activeBuzzId = null
+                        respondToBuzzSupabase(buzzId, "dismissed")
+                    }
+                }, 120000)
+            }
+            return START_STICKY
+        }
+
         val userId = intent?.getStringExtra(EXTRA_USER_ID) ?: getSavedUserId()
         if (userId == null) {
             stopSelf()
@@ -141,8 +206,15 @@ class BuzzerService : Service() {
             restartAttempt = 0
         }
 
+        // Re-acquire WakeLock on every start to ensure polling stays alive
+        acquireWakeLock()
+
         val notification = buildNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
 
         if (currentUserId != userId) {
             Log.d(TAG, "Starting polling for userId: $userId")
@@ -165,9 +237,10 @@ class BuzzerService : Service() {
 
     // ─── Supabase REST API helpers ─────────────────────────
     private fun supabaseGet(path: String): String? {
+        var conn: HttpURLConnection? = null
         try {
             val url = URL("${SupabaseConfig.URL}/rest/v1/$path")
-            val conn = url.openConnection() as HttpURLConnection
+            conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("apikey", SupabaseConfig.ANON_KEY)
             conn.setRequestProperty("Authorization", "Bearer ${SupabaseConfig.ANON_KEY}")
@@ -180,18 +253,20 @@ class BuzzerService : Service() {
                 reader.close()
                 return response
             }
-            conn.disconnect()
         } catch (e: Exception) {
             Log.e(TAG, "Supabase GET error: ${e.message}")
+        } finally {
+            conn?.disconnect()
         }
         return null
     }
 
     private fun supabasePatch(path: String, body: JSONObject) {
         Thread {
+            var conn: HttpURLConnection? = null
             try {
                 val url = URL("${SupabaseConfig.URL}/rest/v1/$path")
-                val conn = url.openConnection() as HttpURLConnection
+                conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "PATCH"
                 conn.setRequestProperty("apikey", SupabaseConfig.ANON_KEY)
                 conn.setRequestProperty("Authorization", "Bearer ${SupabaseConfig.ANON_KEY}")
@@ -203,18 +278,20 @@ class BuzzerService : Service() {
                 writer.flush()
                 writer.close()
                 conn.responseCode // trigger the request
-                conn.disconnect()
             } catch (e: Exception) {
                 Log.e(TAG, "Supabase PATCH error: ${e.message}")
+            } finally {
+                conn?.disconnect()
             }
         }.start()
     }
 
     private fun supabaseUpsert(table: String, body: JSONObject) {
         Thread {
+            var conn: HttpURLConnection? = null
             try {
                 val url = URL("${SupabaseConfig.URL}/rest/v1/$table")
-                val conn = url.openConnection() as HttpURLConnection
+                conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("apikey", SupabaseConfig.ANON_KEY)
                 conn.setRequestProperty("Authorization", "Bearer ${SupabaseConfig.ANON_KEY}")
@@ -226,9 +303,10 @@ class BuzzerService : Service() {
                 writer.flush()
                 writer.close()
                 conn.responseCode
-                conn.disconnect()
             } catch (e: Exception) {
                 Log.e(TAG, "Supabase upsert error: ${e.message}")
+            } finally {
+                conn?.disconnect()
             }
         }.start()
     }
@@ -277,8 +355,9 @@ class BuzzerService : Service() {
                         }
                     }
                 }
-                // Check for responses to active buzzes (cancellation)
-                val activeJson = supabaseGet("buzzes?to_user_id=eq.$userId&response=neq.none&select=id,response,from_user_id") ?: return@Thread
+                // Check for responses to active buzzes (cancellation) — only check last 5 minutes
+                val since = System.currentTimeMillis() - 300000
+                val activeJson = supabaseGet("buzzes?to_user_id=eq.$userId&response=neq.none&created_at=gte.$since&select=id,response,from_user_id") ?: return@Thread
                 val activeArr = JSONArray(activeJson)
                 for (i in 0 until activeArr.length()) {
                     val buzz = activeArr.getJSONObject(i)
@@ -634,9 +713,19 @@ class BuzzerService : Service() {
 
     private fun acquireWakeLock() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
+        // Release any existing WakeLock before acquiring a new one
+        wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "buzzer::listener").apply {
-            acquire(24 * 60 * 60 * 1000L)
+            acquire() // No timeout — released in onDestroy()
         }
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        super.onTimeout(startId, fgsType)
+        Log.d(TAG, "FGS timeout (dataSync limit) — restarting")
+        scheduleRestartAlarm()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {

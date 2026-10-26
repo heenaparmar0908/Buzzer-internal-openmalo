@@ -33,12 +33,21 @@ export const setupBackgroundHandler = () => {
       if (!data) return;
 
       if (data.type === 'buzz') {
-        // Restart BuzzerService so it can force max volume even on silent/vibrate
+        // Always try to deliver directly to BuzzerService (starts it if dead)
+        // This gives full alarm: max volume, silent/DND override, vibration
         try {
           const {NativeModules} = require('react-native');
-          NativeModules.BuzzerService?.restartService?.();
+          const started = await NativeModules.BuzzerService?.showBuzz?.(
+            data.buzz_id,
+            data.from_user_id || '',
+            data.from_user_name || 'User',
+            data.reason || '',
+            data.note || null,
+          );
+          if (started) return; // Service handled it with full alarm
         } catch (e) {}
 
+        // Service couldn't start (OS blocked it) — show notifee notification as fallback
         const senderName = data.from_user_name || 'User';
 
         await notifee.createChannel({

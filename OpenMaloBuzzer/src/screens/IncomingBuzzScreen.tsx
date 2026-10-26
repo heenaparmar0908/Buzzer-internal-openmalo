@@ -19,6 +19,7 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
     const unsub = subscribeToBuzz(payload.buzz_id, (buzz: Buzz) => {
       if (buzz.response !== 'none') {
         NativeModules.BuzzerService?.stopAlarm();
+        NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
         cancelBuzzNotification(payload.buzz_id);
         onDismiss();
       }
@@ -38,6 +39,7 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
   useEffect(() => {
     const timeout = setTimeout(() => {
       NativeModules.BuzzerService?.stopAlarm();
+      NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
       respondToBuzz(payload.buzz_id, 'dismissed').catch(() => {});
       cancelBuzzNotification(payload.buzz_id).catch(() => {});
       onDismiss();
@@ -47,6 +49,7 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
 
   const handleResponse = async (response: BuzzResponse) => {
     NativeModules.BuzzerService?.stopAlarm();
+    NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
     await respondToBuzz(payload.buzz_id, response);
     await cancelBuzzNotification(payload.buzz_id);
     onDismiss();

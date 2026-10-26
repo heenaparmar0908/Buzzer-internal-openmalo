@@ -74,6 +74,11 @@ export const signup = async (
 };
 
 export const deleteAccount = async (userId: string): Promise<void> => {
+  // Clear FCM token before deleting account
+  try {
+    const {supabase} = require('./supabase');
+    await supabase.from('user_tokens').delete().eq('user_id', userId);
+  } catch {}
   await removeUser(userId);
   await AsyncStorage.removeItem(AUTH_KEY);
 };
@@ -86,6 +91,17 @@ export const getStoredUser = async (): Promise<User | null> => {
 };
 
 export const logout = async () => {
+  // Clear FCM token from server so logged-out user doesn't receive ghost pushes
+  try {
+    const data = await AsyncStorage.getItem(AUTH_KEY);
+    if (data) {
+      const user = JSON.parse(data);
+      if (user?.id) {
+        const {supabase} = require('./supabase');
+        await supabase.from('user_tokens').delete().eq('user_id', user.id);
+      }
+    }
+  } catch {}
   await AsyncStorage.removeItem(AUTH_KEY);
 };
 

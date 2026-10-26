@@ -10,6 +10,7 @@ import {
   TextInput,
   Modal,
   Dimensions,
+  AppState,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -185,8 +186,16 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
       setLogCount(count || 0);
     };
     fetchLogCount();
-    const interval = setInterval(fetchLogCount, 30000);
-    return () => clearInterval(interval);
+    let interval: ReturnType<typeof setInterval> | null = setInterval(fetchLogCount, 30000);
+    const sub = AppState.addEventListener('change', (state: string) => {
+      if (state === 'active') {
+        fetchLogCount();
+        if (!interval) interval = setInterval(fetchLogCount, 30000);
+      } else {
+        if (interval) { clearInterval(interval); interval = null; }
+      }
+    });
+    return () => { if (interval) clearInterval(interval); sub.remove(); };
   }, [currentUser.id]);
 
   const handleOpenHistory = async () => {
