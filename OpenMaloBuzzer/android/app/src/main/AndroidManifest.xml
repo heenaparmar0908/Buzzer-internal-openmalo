@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Android 13+: opt into exact alarm permission prompt -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <application
       android:name=".MainApplication"
@@ -40,14 +42,18 @@
         android:name=".BuzzerService"
         android:enabled="true"
         android:exported="false"
-        android:foregroundServiceType="dataSync" />
+        android:foregroundServiceType="dataSync"
+        android:stopWithTask="false" />
       <receiver
         android:name=".BootReceiver"
         android:enabled="true"
-        android:exported="true">
+        android:exported="true"
+        android:directBootAware="true">
         <intent-filter>
           <action android:name="android.intent.action.BOOT_COMPLETED" />
           <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+          <!-- Xiaomi/HTC specific boot broadcast -->
+          <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
         </intent-filter>
       </receiver>
     </application>

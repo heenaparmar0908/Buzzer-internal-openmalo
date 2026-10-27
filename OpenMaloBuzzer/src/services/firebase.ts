@@ -85,7 +85,8 @@ export const createBuzz = async (buzz: Omit<Buzz, 'id'>) => {
 };
 
 export const respondToBuzz = async (buzzId: string, response: BuzzResponse) => {
-  await supabase.from('buzzes').update({response, responded_at: Date.now()}).eq('id', buzzId);
+  const {error} = await supabase.from('buzzes').update({response, responded_at: Date.now()}).eq('id', buzzId);
+  if (error) console.warn('respondToBuzz failed:', buzzId, error.message);
 };
 
 export const markEscalated = async (buzzId: string) => {
@@ -178,8 +179,11 @@ export const subscribeToIncomingBuzzes = (
   callback: (buzz: Buzz) => void,
   onRemoved?: (buzzId: string) => void,
 ) => {
-  let ready = false;
-  setTimeout(() => { ready = true; }, 2000);
+  // Track buzzIds seen in the initial fetch so we can suppress their
+  // immediate UPDATE events (they were already handled). New buzzes
+  // that arrive after the initial fetch pass through immediately —
+  // no blanket 2-second delay that would block real-time cancellations.
+  const initialFetchIds = new Set<string>();
 
   // Initial fetch for existing pending buzzes
   supabase.from('buzzes').select('*')
@@ -189,6 +193,7 @@ export const subscribeToIncomingBuzzes = (
       if (data) {
         data.forEach(buzz => {
           if (Date.now() - (buzz as Buzz).created_at < 120000) {
+            initialFetchIds.add((buzz as Buzz).id);
             callback(buzz as Buzz);
           }
         });
@@ -205,8 +210,14 @@ export const subscribeToIncomingBuzzes = (
     })
     .on('postgres_changes', {event: 'UPDATE', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, (payload) => {
       const buzz = payload.new as Buzz;
-      if (buzz.response !== 'none' && ready && onRemoved) {
-        onRemoved(buzz.id);
+      if (buzz.response !== 'none' && onRemoved) {
+        if (initialFetchIds.has(buzz.id)) {
+          // This buzz was already shown by the initial fetch — suppress
+          // the first UPDATE to avoid immediately dismissing it.
+          initialFetchIds.delete(buzz.id);
+        } else {
+          onRemoved(buzz.id);
+        }
       }
     })
     .subscribe();

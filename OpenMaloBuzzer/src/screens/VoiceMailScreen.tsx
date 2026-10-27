@@ -70,6 +70,13 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
   };
 
   // ─── RECORD ───
+  const getRecorder = () => {
+    if (Platform.OS === 'ios') {
+      return NativeModules.AudioRecorderModule;
+    }
+    return NativeModules.BuzzerService;
+  };
+
   const startRecording = async () => {
     const hasPermission = await requestPermission();
     if (!hasPermission) {
@@ -77,7 +84,12 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
       return;
     }
     try {
-      await NativeModules.BuzzerService.startRecording();
+      const recorder = getRecorder();
+      if (!recorder) {
+        Alert.alert('Error', 'Recording is not available on this device');
+        return;
+      }
+      await recorder.startRecording();
       setRecording(true);
       setRecordedPath(null);
       setRecordTime(0);
@@ -94,7 +106,8 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
   const stopRecording = async () => {
     stopTimer();
     try {
-      const path = await NativeModules.BuzzerService.stopRecording();
+      const recorder = getRecorder();
+      const path = await recorder?.stopRecording();
       setRecordedPath(path || null);
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Could not stop recording');
@@ -297,7 +310,7 @@ const VoiceMailScreen: React.FC<Props> = ({currentUser, targetUser, onBack}) => 
     );
   };
 
-  const hasNativeRecorder = !!NativeModules.BuzzerService;
+  const hasNativeRecorder = Platform.OS === 'ios' ? !!NativeModules.AudioRecorderModule : !!NativeModules.BuzzerService;
 
   return (
     <View style={styles.container}>

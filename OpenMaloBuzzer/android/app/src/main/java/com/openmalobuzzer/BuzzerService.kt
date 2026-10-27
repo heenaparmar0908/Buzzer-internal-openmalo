@@ -49,10 +49,15 @@ class BuzzerService : Service() {
         const val EXTRA_REASON = "reason"
         const val EXTRA_NOTE = "note"
         const val BUZZ_CHANNEL_ID = "openmalo_buzz"
+        const val BUZZ_VISUAL_CHANNEL_ID = "openmalo_buzz_visual"
         const val VOICEMAIL_CHANNEL_ID = "openmalo_voicemail"
         const val PREFS_NAME = "buzzer_prefs"
         const val PREF_USER_ID = "active_user_id"
         const val PREF_LAST_HEARTBEAT = "last_heartbeat"
+        const val PREF_ACTIVE_BUZZ_ID = "active_buzz_id"
+        const val PREF_ACTIVE_BUZZ_FROM = "active_buzz_from"
+        const val PREF_ACTIVE_BUZZ_REASON = "active_buzz_reason"
+        const val PREF_ACTIVE_BUZZ_NOTE = "active_buzz_note"
         const val POLL_INTERVAL_MS = 10000L
         const val FCM_TOKEN_REFRESH_MS = 3600000L
         val RESTART_RETRY_DELAYS = longArrayOf(3000L, 10000L, 30000L, 60000L)
@@ -66,15 +71,65 @@ class BuzzerService : Service() {
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var alarmWakeLock: PowerManager.WakeLock? = null
     private var mediaPlayer: MediaPlayer? = null
     private var vibrator: Vibrator? = null
     private var isAlarming = false
     private var originalAlarmVolume: Int = -1
     private var originalRingerMode: Int = -1
     private var originalDndMode: Int = -1
+    private var audioFocusRequest: Any? = null // AudioFocusRequest on O+
     private var activeBuzzId: String? = null
     private val seenBuzzIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val handler = Handler(Looper.getMainLooper())
+
+    // Persistent dedup: survives process restart. Key = buzzId, value = timestamp when seen.
+    // Cleaned up on every poll cycle to avoid unbounded growth.
+    private fun markBuzzSeen(buzzId: String) {
+        seenBuzzIds.add(buzzId)
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val json = prefs.getString("seen_buzz_ids", "{}") ?: "{}"
+            val map = JSONObject(json)
+            map.put(buzzId, System.currentTimeMillis())
+            prefs.edit().putString("seen_buzz_ids", map.toString()).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist seen buzzId: ${e.message}")
+        }
+    }
+
+    private fun isBuzzSeen(buzzId: String): Boolean {
+        if (seenBuzzIds.contains(buzzId)) return true
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val json = prefs.getString("seen_buzz_ids", "{}") ?: "{}"
+            val map = JSONObject(json)
+            if (map.has(buzzId)) {
+                seenBuzzIds.add(buzzId) // re-hydrate in-memory set
+                return true
+            }
+        } catch (_: Exception) {}
+        return false
+    }
+
+    private fun cleanupOldSeenBuzzIds() {
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val json = prefs.getString("seen_buzz_ids", "{}") ?: "{}"
+            val map = JSONObject(json)
+            val cutoff = System.currentTimeMillis() - 300000 // 5 minutes
+            val keysToRemove = mutableListOf<String>()
+            val keys = map.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (map.optLong(key, 0) < cutoff) keysToRemove.add(key)
+            }
+            keysToRemove.forEach { map.remove(it) }
+            if (keysToRemove.isNotEmpty()) {
+                prefs.edit().putString("seen_buzz_ids", map.toString()).apply()
+            }
+        } catch (_: Exception) {}
+    }
     private var currentUserId: String? = null
     private var restartAttempt = 0
     private val userNameCache = mutableMapOf<String, String>()
@@ -101,6 +156,8 @@ class BuzzerService : Service() {
     override fun onCreate() {
         super.onCreate()
         createServiceChannel()
+        createBuzzChannel()
+        createBuzzVisualChannel()
         createVoiceMailChannel()
         acquireWakeLock()
         vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -130,6 +187,7 @@ class BuzzerService : Service() {
             stopAlarm()
             cancelActiveBuzzNotification()
             activeBuzzId = null
+            clearActiveBuzz()
             return START_STICKY
         }
 
@@ -142,6 +200,7 @@ class BuzzerService : Service() {
                 respondToBuzzSupabase(buzzId, response)
                 cancelAllNotificationsForBuzz(buzzId)
                 if (activeBuzzId == buzzId) activeBuzzId = null
+                clearActiveBuzz()
             }
             return START_STICKY
         }
@@ -171,23 +230,28 @@ class BuzzerService : Service() {
             val fromUserName = intent?.getStringExtra(EXTRA_FROM_USER_NAME)
             val reason = intent?.getStringExtra(EXTRA_REASON) ?: ""
             val note = intent?.getStringExtra(EXTRA_NOTE)?.let { if (it.isEmpty() || it == "null") null else it }
-            if (buzzId != null && !seenBuzzIds.contains(buzzId)) {
-                Log.d(TAG, "Buzz delivered via FCM push: $buzzId")
-                seenBuzzIds.add(buzzId)
+            if (buzzId != null && !isBuzzSeen(buzzId)) {
+                val t7 = System.currentTimeMillis()
+                Log.d(TAG, "[T7] Buzz processing start: $buzzId at $t7")
+                markBuzzSeen(buzzId)
                 // Cache sender name from FCM data so notification shows instantly
                 if (!fromUserName.isNullOrEmpty() && fromUserName != "User") {
                     userNameCache[fromUserId] = fromUserName
                 }
                 stopAlarm()
                 activeBuzzId = buzzId
+                saveActiveBuzz(buzzId, fromUserId, reason, note)
                 showBuzzNotification(buzzId, fromUserId, reason, note)
+                Log.d(TAG, "[T9] Notification posted: $buzzId at ${System.currentTimeMillis()} (+${System.currentTimeMillis() - t7}ms)")
                 startAlarm()
+                Log.d(TAG, "[T8] Alarm started: $buzzId at ${System.currentTimeMillis()} (+${System.currentTimeMillis() - t7}ms)")
                 handler.postDelayed({
                     if (activeBuzzId == buzzId) {
                         Log.d(TAG, "Auto-dismissing buzz $buzzId after 2 min timeout")
                         stopAlarm()
                         cancelAllNotificationsForBuzz(buzzId)
                         activeBuzzId = null
+                        clearActiveBuzz()
                         respondToBuzzSupabase(buzzId, "dismissed")
                     }
                 }, 120000)
@@ -224,6 +288,95 @@ class BuzzerService : Service() {
             startPolling()
             refreshFcmToken(userId)
             cancelRestartAlarm()
+        }
+
+        // Recover active buzz after process death — re-trigger alarm if the
+        // buzz was still active when the service was killed.
+        if (activeBuzzId == null) {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val savedBuzzId = prefs.getString(PREF_ACTIVE_BUZZ_ID, null)
+            if (savedBuzzId != null) {
+                val savedFrom = prefs.getString(PREF_ACTIVE_BUZZ_FROM, "") ?: ""
+                val savedReason = prefs.getString(PREF_ACTIVE_BUZZ_REASON, "") ?: ""
+                val savedNote = prefs.getString(PREF_ACTIVE_BUZZ_NOTE, null)
+                Log.d(TAG, "Recovering active buzz after restart: $savedBuzzId")
+                // Verify the buzz is still unanswered on the server before
+                // replaying. Without this check, a buzz that was already
+                // responded to (but process killed before clearActiveBuzz)
+                // would alarm again for up to 2 minutes.
+                Thread {
+                    try {
+                        val json = supabaseGet("buzzes?id=eq.$savedBuzzId&select=response")
+                        if (json == null) {
+                            // Network failed — replay anyway, same as catch block
+                            Log.w(TAG, "Network unavailable for recovered buzz verification — replaying $savedBuzzId")
+                            handler.post {
+                                seenBuzzIds.remove(savedBuzzId)
+                                activeBuzzId = savedBuzzId
+                                showBuzzNotification(savedBuzzId, savedFrom, savedReason, savedNote)
+                                startAlarm()
+                                handler.postDelayed({
+                                    if (activeBuzzId == savedBuzzId) {
+                                        Log.d(TAG, "Auto-dismissing recovered buzz $savedBuzzId after 2 min timeout")
+                                        stopAlarm()
+                                        cancelAllNotificationsForBuzz(savedBuzzId)
+                                        activeBuzzId = null
+                                        clearActiveBuzz()
+                                        respondToBuzzSupabase(savedBuzzId, "dismissed")
+                                    }
+                                }, 120000)
+                            }
+                            return@Thread
+                        }
+                        val arr = JSONArray(json)
+                        if (arr.length() > 0) {
+                            val response = arr.getJSONObject(0).optString("response", "none")
+                            if (response != "none") {
+                                Log.d(TAG, "Recovered buzz $savedBuzzId already has response=$response — skipping alarm")
+                                handler.post { clearActiveBuzz() }
+                                return@Thread
+                            }
+                        }
+                        // Buzz is still unanswered — replay the alarm
+                        handler.post {
+                            seenBuzzIds.remove(savedBuzzId)
+                            activeBuzzId = savedBuzzId
+                            showBuzzNotification(savedBuzzId, savedFrom, savedReason, savedNote)
+                            startAlarm()
+                            handler.postDelayed({
+                                if (activeBuzzId == savedBuzzId) {
+                                    Log.d(TAG, "Auto-dismissing recovered buzz $savedBuzzId after 2 min timeout")
+                                    stopAlarm()
+                                    cancelAllNotificationsForBuzz(savedBuzzId)
+                                    activeBuzzId = null
+                                    clearActiveBuzz()
+                                    respondToBuzzSupabase(savedBuzzId, "dismissed")
+                                }
+                            }, 120000)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to verify recovered buzz: ${e.message}")
+                        // On network failure, replay anyway — better to alarm
+                        // for an answered buzz than to miss an unanswered one.
+                        handler.post {
+                            seenBuzzIds.remove(savedBuzzId)
+                            activeBuzzId = savedBuzzId
+                            showBuzzNotification(savedBuzzId, savedFrom, savedReason, savedNote)
+                            startAlarm()
+                            handler.postDelayed({
+                                if (activeBuzzId == savedBuzzId) {
+                                    Log.d(TAG, "Auto-dismissing recovered buzz $savedBuzzId after 2 min timeout")
+                                    stopAlarm()
+                                    cancelAllNotificationsForBuzz(savedBuzzId)
+                                    activeBuzzId = null
+                                    clearActiveBuzz()
+                                    respondToBuzzSupabase(savedBuzzId, "dismissed")
+                                }
+                            }, 120000)
+                        }
+                    }
+                }.start()
+            }
         }
 
         return START_STICKY
@@ -329,17 +482,21 @@ class BuzzerService : Service() {
                     val buzz = arr.getJSONObject(i)
                     val buzzId = buzz.getString("id")
                     val createdAt = buzz.getLong("created_at")
-                    if (System.currentTimeMillis() - createdAt < 120000 && !seenBuzzIds.contains(buzzId)) {
-                        Log.d(TAG, "New buzz detected via poll: $buzzId")
-                        seenBuzzIds.add(buzzId)
+                    if (System.currentTimeMillis() - createdAt < 120000 && !isBuzzSeen(buzzId)) {
+                        Log.d(TAG, "[POLL] New buzz detected via poll: $buzzId (age=${System.currentTimeMillis() - createdAt}ms)")
+                        markBuzzSeen(buzzId)
+                        val pollFromUserId = buzz.optString("from_user_id", "")
+                        val pollReason = buzz.optString("reason", "")
+                        val pollNote = buzz.optString("note", null).let { if (it == "null") null else it }
                         handler.post {
                             stopAlarm()
                             activeBuzzId = buzzId
+                            saveActiveBuzz(buzzId, pollFromUserId, pollReason, pollNote)
                             showBuzzNotification(
                                 buzzId = buzzId,
-                                fromUserId = buzz.optString("from_user_id", ""),
-                                reason = buzz.optString("reason", ""),
-                                note = buzz.optString("note", null).let { if (it == "null") null else it }
+                                fromUserId = pollFromUserId,
+                                reason = pollReason,
+                                note = pollNote
                             )
                             startAlarm()
                             // Auto-stop alarm after 2 minutes and mark as dismissed
@@ -349,6 +506,7 @@ class BuzzerService : Service() {
                                     stopAlarm()
                                     cancelAllNotificationsForBuzz(buzzId)
                                     activeBuzzId = null
+                                    clearActiveBuzz()
                                     respondToBuzzSupabase(buzzId, "dismissed")
                                 }
                             }, 120000)
@@ -380,6 +538,7 @@ class BuzzerService : Service() {
                 Log.e(TAG, "Poll failed: ${e.message}")
             }
             if (seenBuzzIds.size > 50) seenBuzzIds.clear()
+            cleanupOldSeenBuzzIds()
         }.start()
     }
 
@@ -484,31 +643,109 @@ class BuzzerService : Service() {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove(PREF_USER_ID).apply()
     }
 
+    private fun saveActiveBuzz(buzzId: String, fromUserId: String, reason: String, note: String?) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString(PREF_ACTIVE_BUZZ_ID, buzzId)
+            .putString(PREF_ACTIVE_BUZZ_FROM, fromUserId)
+            .putString(PREF_ACTIVE_BUZZ_REASON, reason)
+            .putString(PREF_ACTIVE_BUZZ_NOTE, note)
+            .apply()
+    }
+
+    private fun clearActiveBuzz() {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .remove(PREF_ACTIVE_BUZZ_ID)
+            .remove(PREF_ACTIVE_BUZZ_FROM)
+            .remove(PREF_ACTIVE_BUZZ_REASON)
+            .remove(PREF_ACTIVE_BUZZ_NOTE)
+            .apply()
+    }
+
     // ─── Alarm ─────────────────────────────────────────────
     private fun startAlarm() {
         if (isAlarming) return
         isAlarming = true
+        Log.d(TAG, "startAlarm: beginning alarm sequence")
 
+        // 1. Wake up the screen so the user sees the buzz
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            alarmWakeLock?.let { if (it.isHeld) it.release() }
+            @Suppress("DEPRECATION")
+            alarmWakeLock = pm.newWakeLock(
+                PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+                "buzzer::alarm"
+            ).apply { acquire(120000) } // auto-release after 2 min
+        } catch (e: Exception) {
+            Log.e(TAG, "Alarm wake lock error: ${e.message}")
+        }
+
+        // 2. Disable DND if we have permission
         try {
             val nm = getSystemService(NotificationManager::class.java)
             if (nm.isNotificationPolicyAccessGranted) {
                 originalDndMode = nm.currentInterruptionFilter
                 if (originalDndMode != NotificationManager.INTERRUPTION_FILTER_ALL) {
                     nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+                    Log.d(TAG, "DND disabled for alarm (was $originalDndMode)")
                 }
+            } else {
+                Log.w(TAG, "DND access not granted — alarm may be silent on some OEMs in DND mode")
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Log.w(TAG, "DND override failed: ${e.message}")
+        }
+
+        // 3. Max alarm volume and set ringer to normal — each operation independent
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        try {
+            originalAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVol, 0)
+            // Verify it actually took effect
+            val actualVol = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+            if (actualVol < maxVol) {
+                Log.w(TAG, "Alarm volume set to $actualVol/$maxVol (OEM may have restricted it)")
+            } else {
+                Log.d(TAG, "Alarm volume set to max: $maxVol")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "setStreamVolume(ALARM) failed: ${e.message}")
+        }
 
         try {
-            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            originalAlarmVolume = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
-            audioManager.setStreamVolume(AudioManager.STREAM_ALARM, audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM), 0)
             originalRingerMode = audioManager.ringerMode
             if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
                 audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                Log.d(TAG, "Ringer mode set to NORMAL (was $originalRingerMode)")
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            // Requires DND access on Android 7+; expected to fail without it
+            Log.w(TAG, "setRingerMode failed (needs DND access): ${e.message}")
+        }
 
+        // 4. Request audio focus — critical for OEMs that don't exempt USAGE_ALARM
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val focusReq = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                    .setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build())
+                    .setAcceptsDelayedFocusGain(false)
+                    .build()
+                val result = audioManager.requestAudioFocus(focusReq)
+                audioFocusRequest = focusReq
+                Log.d(TAG, "Audio focus request result: $result")
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Audio focus request failed: ${e.message}")
+        }
+
+        // 5. Start vibration
         val pattern = longArrayOf(0, 500, 200, 500, 200, 500, 200, 500)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
@@ -516,43 +753,124 @@ class BuzzerService : Service() {
             @Suppress("DEPRECATION") vibrator?.vibrate(pattern, 0)
         }
 
-        try {
+        // 6. Start sound playback
+        if (!tryStartMediaPlayer()) {
+            Log.w(TAG, "MediaPlayer failed on first attempt, retrying in 500ms...")
+            handler.postDelayed({
+                if (isAlarming && mediaPlayer == null) {
+                    if (!tryStartMediaPlayer()) {
+                        Log.e(TAG, "MediaPlayer failed on retry — alarm will be vibration-only")
+                    }
+                }
+            }, 500)
+        }
+    }
+
+    private fun tryStartMediaPlayer(): Boolean {
+        // Release any existing player first
+        mediaPlayer?.let {
+            try { it.release() } catch (_: Exception) {}
+            mediaPlayer = null
+        }
+        return try {
             val soundUri = Uri.parse("android.resource://$packageName/raw/buzz_alarm")
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build())
-                setDataSource(this@BuzzerService, soundUri)
-                isLooping = true
-                setVolume(1.0f, 1.0f)
-                prepare()
-                start()
+            val player = MediaPlayer()
+            player.setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setFlags(AudioAttributes.FLAG_AUDIBILITY_ENFORCED)
+                .build())
+            player.setDataSource(this@BuzzerService, soundUri)
+            player.isLooping = true
+            player.setVolume(1.0f, 1.0f)
+
+            // Detect playback errors mid-stream (Bluetooth disconnect, audio policy kill, etc.)
+            player.setOnErrorListener { mp, what, extra ->
+                Log.e(TAG, "MediaPlayer error during playback: what=$what extra=$extra")
+                try { mp.release() } catch (_: Exception) {}
+                mediaPlayer = null
+                // Auto-retry once if we're still supposed to be alarming
+                if (isAlarming) {
+                    handler.postDelayed({
+                        if (isAlarming && mediaPlayer == null) {
+                            Log.d(TAG, "Restarting MediaPlayer after mid-playback error")
+                            tryStartMediaPlayer()
+                        }
+                    }, 300)
+                }
+                true // error handled
             }
+
+            player.prepare()
+            player.start()
+            mediaPlayer = player
+
+            if (player.isPlaying) {
+                Log.d(TAG, "MediaPlayer started successfully, isPlaying=true")
+            } else {
+                Log.w(TAG, "MediaPlayer.start() called but isPlaying=false")
+            }
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "Alarm sound error: ${e.message}")
+            Log.e(TAG, "Alarm sound error: ${e.message}", e)
+            mediaPlayer?.let {
+                try { it.release() } catch (_: Exception) {}
+            }
+            mediaPlayer = null
+            false
         }
     }
 
     private fun stopAlarm() {
+        if (!isAlarming && mediaPlayer == null && alarmWakeLock == null) return
+        Log.d(TAG, "stopAlarm: stopping alarm sequence")
         isAlarming = false
         vibrator?.cancel()
+
+        // Stop and release MediaPlayer
         mediaPlayer?.let {
             try { if (it.isPlaying) it.stop() } catch (_: Exception) {}
             try { it.release() } catch (_: Exception) {}
         }
         mediaPlayer = null
 
+        // Release screen wake lock
+        alarmWakeLock?.let { if (it.isHeld) try { it.release() } catch (_: Exception) {} }
+        alarmWakeLock = null
+
+        // Abandon audio focus
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                (audioFocusRequest as? android.media.AudioFocusRequest)?.let {
+                    audioManager.abandonAudioFocusRequest(it)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.abandonAudioFocus(null)
+            }
+            audioFocusRequest = null
+        } catch (_: Exception) {}
+
+        // Restore alarm volume (separate try-catch so ringer restore still runs if this fails)
         if (originalAlarmVolume >= 0) {
             try {
                 val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
                 audioManager.setStreamVolume(AudioManager.STREAM_ALARM, originalAlarmVolume, 0)
-                if (originalRingerMode >= 0) audioManager.ringerMode = originalRingerMode
             } catch (_: Exception) {}
             originalAlarmVolume = -1
+        }
+
+        // Restore ringer mode
+        if (originalRingerMode >= 0) {
+            try {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                audioManager.ringerMode = originalRingerMode
+            } catch (_: Exception) {}
             originalRingerMode = -1
         }
 
+        // Restore DND
         if (originalDndMode >= 0) {
             try {
                 val nm = getSystemService(NotificationManager::class.java)
@@ -605,7 +923,9 @@ class BuzzerService : Service() {
     }
 
     private fun showBuzzNotification(buzzId: String, fromUserId: String, reason: String, note: String?) {
+        val notifStart = System.currentTimeMillis()
         resolveUserName(fromUserId) { senderName ->
+            Log.d(TAG, "[T9-detail] resolveUserName completed for $buzzId in ${System.currentTimeMillis() - notifStart}ms (name=$senderName)")
             cancelAllNotificationsForBuzz(buzzId)
             val body = if (note.isNullOrEmpty() || note == "null") reason else "$reason — $note"
             val launchIntent = Intent(this, MainActivity::class.java).apply {
@@ -627,9 +947,13 @@ class BuzzerService : Service() {
                 return PendingIntent.getService(this, rc, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             }
 
-            createBuzzChannel()
+            createBuzzVisualChannel()
 
-            val notification = NotificationCompat.Builder(this, BUZZ_CHANNEL_ID)
+            // Use the visual-only channel (no sound, HIGH importance) so the
+            // notification shows as a heads-up popup without playing audio.
+            // All audio is handled by startAlarm() via MediaPlayer with USAGE_ALARM,
+            // max volume, and audio focus — the notification is purely visual + action buttons.
+            val notification = NotificationCompat.Builder(this, BUZZ_VISUAL_CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("Buzz from $senderName")
                 .setContentText(body)
@@ -703,10 +1027,45 @@ class BuzzerService : Service() {
     private fun createBuzzChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
+            val soundUri = Uri.parse("android.resource://$packageName/raw/buzz_alarm")
+            val audioAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
+            // Android locks channel settings after creation. If the channel exists
+            // with wrong settings (e.g., USAGE_NOTIFICATION instead of USAGE_ALARM,
+            // or bypassDnd=false), delete and recreate it. This is a one-time
+            // migration that runs natively before React Native's JS bridge starts.
+            val existing = nm.getNotificationChannel(BUZZ_CHANNEL_ID)
+            if (existing != null) {
+                val existingUsage = existing.audioAttributes?.usage ?: -1
+                if (!existing.canBypassDnd() || existingUsage != AudioAttributes.USAGE_ALARM) {
+                    Log.d(TAG, "Buzz channel has wrong settings (bypassDnd=${existing.canBypassDnd()}, usage=$existingUsage) — deleting and recreating")
+                    nm.deleteNotificationChannel(BUZZ_CHANNEL_ID)
+                }
+            }
+
             nm.createNotificationChannel(NotificationChannel(BUZZ_CHANNEL_ID, "Buzzer Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Incoming buzz alerts"
                 setBypassDnd(true)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setSound(soundUri, audioAttrs)
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
+            })
+        }
+    }
+
+    private fun createBuzzVisualChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(NotificationChannel(BUZZ_VISUAL_CHANNEL_ID, "Buzzer Visual Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Visual heads-up alerts for incoming buzzes (sound handled by alarm)"
+                setBypassDnd(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setSound(null, null) // No sound — MediaPlayer handles all audio
+                enableVibration(false) // No vibration — BuzzerService vibrator handles it
             })
         }
     }
@@ -720,20 +1079,32 @@ class BuzzerService : Service() {
         }
     }
 
+    private var restartScheduledByTimeout = false
+
     override fun onTimeout(startId: Int, fgsType: Int) {
         super.onTimeout(startId, fgsType)
         Log.d(TAG, "FGS timeout (dataSync limit) — restarting")
+        restartScheduledByTimeout = true
         scheduleRestartAlarm()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "Service destroyed — scheduling restart")
+        Log.d(TAG, "Service destroyed")
+        // If no active buzz, clear the persisted state so restart doesn't
+        // falsely re-trigger. If there IS an active buzz, leave it persisted
+        // so the restarted service can recover the alarm.
+        if (activeBuzzId == null) clearActiveBuzz()
         stopAlarm()
         cancelActiveBuzzNotification()
         stopPolling()
-        if (getSavedUserId() != null) scheduleRestartAlarm()
+        // Only schedule restart if onTimeout didn't already do it
+        if (!restartScheduledByTimeout && getSavedUserId() != null) {
+            Log.d(TAG, "Scheduling restart from onDestroy")
+            scheduleRestartAlarm()
+        }
+        restartScheduledByTimeout = false
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }

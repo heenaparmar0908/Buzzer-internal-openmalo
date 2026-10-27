@@ -1,10 +1,15 @@
 package com.openmalobuzzer
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -28,7 +33,22 @@ class BootReceiver : BroadcastReceiver() {
                     }
                     Log.d("BootReceiver", "BuzzerService restarted for userId: $userId")
                 } catch (e: Exception) {
-                    Log.e("BootReceiver", "Failed to restart BuzzerService: ${e.message}")
+                    // Android 12+ can block foreground service start after boot on some OEMs
+                    // Fall back to WorkManager which can start it when conditions allow
+                    Log.e("BootReceiver", "Failed to start service directly: ${e.message}")
+                    try {
+                        val workRequest = OneTimeWorkRequestBuilder<TokenRefreshWorker>()
+                            .setInitialDelay(10, TimeUnit.SECONDS)
+                            .build()
+                        WorkManager.getInstance(context).enqueueUniqueWork(
+                            "boot_service_recovery",
+                            ExistingWorkPolicy.REPLACE,
+                            workRequest
+                        )
+                        Log.d("BootReceiver", "Scheduled WorkManager fallback to restart service")
+                    } catch (we: Exception) {
+                        Log.e("BootReceiver", "WorkManager fallback also failed: ${we.message}")
+                    }
                 }
             } else {
                 Log.d("BootReceiver", "No saved userId — skipping service restart")

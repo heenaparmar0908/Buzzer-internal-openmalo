@@ -96,7 +96,27 @@ Deno.serve(async (req) => {
             apns: {
               headers: { "apns-priority": "10", "apns-push-type": "alert" },
               payload: {
-                aps: { "content-available": 1, sound: "buzz_alarm.wav" },
+                aps: {
+                  "content-available": 1,
+                  // Only play alarm sound for buzz type. For buzz_cancelled
+                  // and voice_message, use the default system sound.
+                  // For buzz, the JS background handler will take over sound
+                  // via notifee/react-native-sound — keep APNs sound as
+                  // fallback only for killed state where JS can't run.
+                  sound: data?.type === "buzz"
+                    ? "buzz_alarm.wav"
+                    : data?.type === "voice_message"
+                    ? "default"
+                    : undefined,
+                  alert: data?.type === "buzz"
+                    ? { title: `Buzz from ${data?.from_user_name || "User"}`, body: data?.reason || "Incoming buzz" }
+                    : data?.type === "voice_message"
+                    ? { title: `Voice message from ${data?.from_user_name || "User"}`, body: `${data?.duration || "0"}s voice message` }
+                    : data?.type === "buzz_cancelled"
+                    ? { title: "Buzz cancelled", body: `${data?.from_user_name || "User"} cancelled the buzz` }
+                    : undefined,
+                  "mutable-content": 1,
+                },
               },
             },
           },

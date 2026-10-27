@@ -1,9 +1,11 @@
+import {Platform} from 'react-native';
 import notifee, {
   EventType,
   AndroidImportance,
   AndroidVisibility,
+  IOSNotificationCategoryAction,
 } from '@notifee/react-native';
-import {NOTIFICATION_CHANNEL_ID, NOTIFICATION_CHANNEL_NAME, VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
+import {NOTIFICATION_CHANNEL_ID, VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
 
 export const setupBackgroundHandler = () => {
   // Handle notification actions in background
@@ -33,32 +35,70 @@ export const setupBackgroundHandler = () => {
       if (!data) return;
 
       if (data.type === 'buzz') {
+        console.log(`[T5] FCM background handler received buzz ${data.buzz_id} at ${Date.now()}`);
         // Always try to deliver directly to BuzzerService (starts it if dead)
         // This gives full alarm: max volume, silent/DND override, vibration
-        try {
-          const {NativeModules} = require('react-native');
-          const started = await NativeModules.BuzzerService?.showBuzz?.(
-            data.buzz_id,
-            data.from_user_id || '',
-            data.from_user_name || 'User',
-            data.reason || '',
-            data.note || null,
-          );
-          if (started) return; // Service handled it with full alarm
-        } catch (e) {}
+        const tryShowBuzz = async (): Promise<boolean> => {
+          try {
+            const {NativeModules} = require('react-native');
+            const started = await NativeModules.BuzzerService?.showBuzz?.(
+              data.buzz_id,
+              data.from_user_id || '',
+              data.from_user_name || 'User',
+              data.reason || '',
+              data.note || null,
+            );
+            return !!started;
+          } catch {
+            return false;
+          }
+        };
 
-        // Service couldn't start (OS blocked it) — show notifee notification as fallback
+        // Try once, retry after a short delay if it fails (Android 12+ bg restrictions)
+        let started = await tryShowBuzz();
+        if (!started && Platform.OS === 'android') {
+          await new Promise<void>(r => setTimeout(r, 300));
+          started = await tryShowBuzz();
+        }
+        if (started) return; // Service handled it with full alarm
+
+        // Service couldn't start (OS blocked it, or iOS) — show notifee notification as fallback
         const senderName = data.from_user_name || 'User';
 
+        // On iOS, cancel the system APNs notification to avoid duplicate with our notifee one
+        if (Platform.OS === 'ios' && data.buzz_id) {
+          try {
+            await notifee.cancelAllNotifications();
+          } catch {}
+        }
+
+        // Set up iOS notification category with action buttons
+        if (Platform.OS === 'ios') {
+          await notifee.setNotificationCategories([{
+            id: 'buzz_actions',
+            actions: [
+              {id: 'ack', title: 'Ack', foreground: false} as IOSNotificationCategoryAction,
+              {id: 'five_min', title: '5 min', foreground: false} as IOSNotificationCategoryAction,
+              {id: 'busy', title: 'Busy', destructive: true, foreground: false} as IOSNotificationCategoryAction,
+            ],
+          }]);
+        }
+
+        // Create a notifee-managed buzz channel for the fallback path.
+        // This is separate from the native BuzzerService.createBuzzChannel()
+        // which uses USAGE_ALARM. Notifee cannot set USAGE_ALARM, but it CAN
+        // play the alarm sound file on a HIGH importance channel. Using the
+        // native channel ID here would cause notifee to overwrite the native
+        // USAGE_ALARM settings with USAGE_NOTIFICATION, breaking DND bypass
+        // for the native path. A dedicated fallback channel avoids this.
+        const FALLBACK_CHANNEL_ID = 'openmalo_buzz_fallback';
         await notifee.createChannel({
-          id: NOTIFICATION_CHANNEL_ID,
-          name: NOTIFICATION_CHANNEL_NAME,
+          id: FALLBACK_CHANNEL_ID,
+          name: 'Buzzer Alerts (Fallback)',
           importance: AndroidImportance.HIGH,
-          visibility: AndroidVisibility.PUBLIC,
           sound: 'buzz_alarm',
           vibration: true,
-          vibrationPattern: [300, 500, 200, 500],
-          bypassDnd: true,
+          vibrationPattern: [0, 500, 200, 500, 200, 500],
         });
 
         await notifee.displayNotification({
@@ -66,7 +106,7 @@ export const setupBackgroundHandler = () => {
           title: `Buzz from ${senderName}`,
           body: data.reason + (data.note && data.note !== 'null' ? ` — ${data.note}` : ''),
           android: {
-            channelId: NOTIFICATION_CHANNEL_ID,
+            channelId: FALLBACK_CHANNEL_ID,
             importance: AndroidImportance.HIGH,
             sound: 'buzz_alarm',
             fullScreenAction: {
@@ -81,6 +121,13 @@ export const setupBackgroundHandler = () => {
             ],
             ongoing: true,
             autoCancel: false,
+          },
+          ios: {
+            // No sound here — the APNs system notification already played
+            // buzz_alarm.wav before this handler ran. Playing it again from
+            // notifee would cause a double sound.
+            interruptionLevel: 'timeSensitive',
+            categoryId: 'buzz_actions',
           },
           data: data as any,
         });
@@ -109,6 +156,10 @@ export const setupBackgroundHandler = () => {
             pressAction: {id: 'open_voice_mail'},
             autoCancel: true,
           },
+          ios: {
+            sound: 'default',
+            interruptionLevel: 'timeSensitive',
+          },
           data: {type: 'voice_message'},
         });
       }
@@ -125,6 +176,9 @@ export const setupBackgroundHandler = () => {
             autoCancel: true,
             timeoutAfter: 10000,
             pressAction: {id: 'default'},
+          },
+          ios: {
+            sound: 'default',
           },
         });
       }

@@ -37,6 +37,8 @@ function App() {
   const [homeTab, setHomeTab] = useState<'recent' | 'people' | 'groups' | 'voice'>('recent');
   const [editGroup, setEditGroup] = useState<Group | null>(null);
   const usersMapRef = useRef<Record<string, string>>({});
+  const userRef = useRef(user);
+  userRef.current = user;
 
   useEffect(() => {
     const requestPermissions = async () => {
@@ -89,6 +91,7 @@ function App() {
     const unsubscribe = subscribeToIncomingBuzzes(
       user.id,
       (buzz) => {
+        console.log(`[T6-RT] Supabase Realtime received buzz ${buzz.id} at ${Date.now()}`);
         if (AppState.currentState === 'active') {
           const name = buzz.from_user_name || usersMapRef.current[buzz.from_user_id] || 'User';
           setIncomingPayload({
@@ -102,11 +105,12 @@ function App() {
         // Background/killed notifications are handled by FCM setBackgroundMessageHandler
       },
       (buzzId) => {
+        // Only cancel the notification here. Don't clear incomingPayload —
+        // IncomingBuzzScreen's own subscribeToBuzz listener handles dismissal.
+        // Clearing here can race with the FCM onMessage handler that sets
+        // the payload, causing "sound plays but no screen" when both fire
+        // in the same React batch.
         cancelBuzzNotification(buzzId).catch(() => {});
-        setIncomingPayload(prev => {
-          if (prev?.buzz_id === buzzId) return null;
-          return prev;
-        });
       },
     );
     return unsubscribe;
@@ -119,14 +123,44 @@ function App() {
       const unsub = onMessage(messaging, (remoteMessage: any) => {
         const data = remoteMessage.data;
         if (!data) return;
+        // Don't process buzzes before auth is complete — checkPending
+        // will pick them up once the user is loaded.
+        if (!userRef.current) return;
+        if (data.type === 'buzz') {
+          console.log(`[T6] FCM onMessage received buzz ${data.buzz_id} at ${Date.now()}`);
+          // Show IncomingBuzzScreen immediately from FCM data — don't wait
+          // for Supabase Realtime which may have variable latency.
+          setIncomingPayload({
+            buzz_id: data.buzz_id,
+            from_user_id: data.from_user_id || '',
+            from_user_name: data.from_user_name || 'User',
+            reason: data.reason || '',
+            note: data.note && data.note !== 'null' ? data.note : null,
+          });
+          if (Platform.OS === 'android') {
+            // Also start native alarm (max volume, vibration, DND override)
+            BuzzerService?.showBuzz?.(
+              data.buzz_id,
+              data.from_user_id || '',
+              data.from_user_name || 'User',
+              data.reason || '',
+              data.note || null,
+            ).catch(() => {});
+          }
+        }
         if (data.type === 'buzz_cancelled') {
-          cancelBuzzNotification(data.buzz_id).catch(() => {});
+          // Only stop the alarm if the cancelled buzz is the one currently
+          // active. Without this check, cancelling an old already-answered
+          // buzz would kill a newer buzz's alarm.
           setIncomingPayload(prev => {
-            if (prev?.buzz_id === data.buzz_id) return null;
+            if (prev?.buzz_id === data.buzz_id) {
+              BuzzerService?.stopAlarm?.();
+              return null;
+            }
             return prev;
           });
+          cancelBuzzNotification(data.buzz_id).catch(() => {});
         }
-        // Voice message notifications handled by native BuzzerService
       });
       return unsub;
     } catch (err) {
@@ -191,6 +225,32 @@ function App() {
           }
           return;
         }
+
+        // iOS: check if app was opened from a notifee notification (killed state)
+        try {
+          const notifee = require('@notifee/react-native').default;
+          const initial = await notifee.getInitialNotification();
+          if (initial?.notification?.data) {
+            const nData = initial.notification.data;
+            if (nData.type === 'voice_message') {
+              setSelectedUser(null);
+              setScreen('voice-mail');
+              setPendingChecked(true);
+              return;
+            }
+            if (nData.buzz_id) {
+              setIncomingPayload({
+                buzz_id: nData.buzz_id as string,
+                from_user_id: (nData.from_user_id as string) || '',
+                from_user_name: (nData.from_user_name as string) || 'User',
+                reason: (nData.reason as string) || '',
+                note: nData.note as string || null,
+              });
+              setPendingChecked(true);
+              return;
+            }
+          }
+        } catch {}
       } catch (err: any) {
         console.warn('checkPending failed:', err?.message || err);
       }

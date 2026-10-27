@@ -3,14 +3,25 @@ import {User} from '../types';
 import {subscribeToUsers} from '../services/firebase';
 import {PRESENCE_TIMEOUT_MS} from '../constants';
 
+// Module-level cache so re-mounting HomeScreen doesn't flash a loading spinner
+let cachedUsers: User[] | null = null;
+
 export const useUsers = (currentUserId: string | undefined) => {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState<User[]>(
+    cachedUsers
+      ? cachedUsers.filter(u => u.id !== currentUserId).sort((a, b) => a.name.localeCompare(b.name))
+      : [],
+  );
+  const [loading, setLoading] = useState(cachedUsers === null);
 
   useEffect(() => {
-    setLoading(true);
     const unsubscribe = subscribeToUsers(allUsers => {
-      setUsers(allUsers.filter(u => u.id !== currentUserId));
+      cachedUsers = allUsers;
+      setUsers(
+        allUsers
+          .filter(u => u.id !== currentUserId)
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      );
       setLoading(false);
     });
     return unsubscribe;

@@ -26,7 +26,7 @@ object OemBatteryHelper {
     // ─── OEM Detection ──────────────────────────────────────
 
     enum class Oem {
-        XIAOMI, HUAWEI, SAMSUNG, OPPO, VIVO, ONEPLUS, STOCK
+        XIAOMI, HUAWEI, SAMSUNG, OPPO, VIVO, ONEPLUS, MOTOROLA, TRANSSION, STOCK
     }
 
     fun detectOem(): Oem {
@@ -38,6 +38,8 @@ object OemBatteryHelper {
             manufacturer.contains("oppo") || manufacturer.contains("realme") -> Oem.OPPO
             manufacturer.contains("vivo") -> Oem.VIVO
             manufacturer.contains("oneplus") -> Oem.ONEPLUS
+            manufacturer.contains("motorola") || manufacturer.contains("lenovo") -> Oem.MOTOROLA
+            manufacturer.contains("tecno") || manufacturer.contains("infinix") || manufacturer.contains("itel") -> Oem.TRANSSION
             else -> Oem.STOCK
         }
     }
@@ -211,6 +213,35 @@ object OemBatteryHelper {
                 })
             }
 
+            Oem.MOTOROLA -> {
+                // Moto App Optimization
+                intents.add(Intent().apply {
+                    component = ComponentName(
+                        "com.motorola.ccc.ota",
+                        "com.motorola.ccc.ota.ui.batteryoptimization.BatteryOptimizationActivity"
+                    )
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            }
+
+            Oem.TRANSSION -> {
+                // Tecno/Infinix/itel Phone Master or HiOS power manager
+                intents.add(Intent().apply {
+                    component = ComponentName(
+                        "com.transsion.phonemaster",
+                        "com.cyin.chameleon.autostart.AutoStartActivity"
+                    )
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+                intents.add(Intent().apply {
+                    component = ComponentName(
+                        "com.transsion.phonemaster",
+                        "com.cyin.chameleon.Ede.activity.PowerSaverActivity"
+                    )
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            }
+
             Oem.STOCK -> {
                 // No OEM-specific intent needed
             }
@@ -314,6 +345,21 @@ object OemBatteryHelper {
                 steps = "1. Go to Settings → Apps → OpenMalo Buzzer → Battery → Don't optimize\n" +
                         "2. Also check: Settings → Battery → Battery Optimization → All apps → OpenMalo Buzzer → Don't optimize",
                 hasAutostart = false,
+                needsManualStep = true
+            )
+            Oem.MOTOROLA -> OemInstructions(
+                oemName = "Motorola/Lenovo",
+                steps = "1. Go to Settings → Battery → Adaptive Battery → turn OFF\n" +
+                        "2. Go to Settings → Apps → OpenMalo Buzzer → Battery → Unrestricted",
+                hasAutostart = false,
+                needsManualStep = true
+            )
+            Oem.TRANSSION -> OemInstructions(
+                oemName = "Tecno/Infinix/itel",
+                steps = "1. Tap 'Open Settings' below\n" +
+                        "2. Find 'OpenMalo Buzzer' and enable Autostart\n" +
+                        "3. Go to Phone Master → Battery Manager → set OpenMalo Buzzer to 'Allow background'",
+                hasAutostart = true,
                 needsManualStep = true
             )
             Oem.STOCK -> OemInstructions(

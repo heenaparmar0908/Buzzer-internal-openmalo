@@ -1,6 +1,7 @@
-import React, {useEffect} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, NativeModules} from 'react-native';
+import React, {useEffect, useRef} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, NativeModules, Platform, Vibration} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import Sound from 'react-native-sound';
 import {BuzzPayload, BuzzResponse, Buzz} from '../types';
 import {respondToBuzz, subscribeToBuzz} from '../services/firebase';
 import {cancelBuzzNotification} from '../services/notification';
@@ -13,45 +14,106 @@ interface Props {
 
 const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
   const insets = useSafeAreaInsets();
+  const soundRef = useRef<Sound | null>(null);
+  const vibrationRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Listen for response changes (sender cancelled, or already responded from notification)
+  const stopIOSAlarm = () => {
+    if (soundRef.current) {
+      soundRef.current.stop();
+      soundRef.current.release();
+      soundRef.current = null;
+    }
+    if (vibrationRef.current) {
+      clearInterval(vibrationRef.current);
+      vibrationRef.current = null;
+    }
+    Vibration.cancel();
+  };
+
+  const stopAllAlarms = () => {
+    NativeModules.BuzzerService?.stopAlarm();
+    stopIOSAlarm();
+  };
+
+  // iOS: play alarm sound + vibration since there's no native BuzzerService
   useEffect(() => {
-    const unsub = subscribeToBuzz(payload.buzz_id, (buzz: Buzz) => {
-      if (buzz.response !== 'none') {
-        NativeModules.BuzzerService?.stopAlarm();
-        NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
-        cancelBuzzNotification(payload.buzz_id);
-        onDismiss();
-      }
+    if (Platform.OS !== 'ios') return;
+    Sound.setCategory('Playback');
+    const s = new Sound('buzz_alarm.wav', Sound.MAIN_BUNDLE, (err) => {
+      if (err) return;
+      s.setVolume(1.0);
+      s.setNumberOfLoops(-1); // loop indefinitely
+      s.play();
     });
-    return unsub;
+    soundRef.current = s;
+    // Vibrate in a loop
+    Vibration.vibrate([0, 500, 200, 500, 200, 500, 200, 500], true);
+    return () => stopIOSAlarm();
+  }, []);
+
+  // Listen for response changes (sender cancelled, or already responded from notification).
+  // Delayed by 1.5s so the initial fetch in subscribeToBuzz doesn't immediately kill
+  // an alarm that just started — prevents "screen appears but no sound" symptom.
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    const timer = setTimeout(() => {
+      unsub = subscribeToBuzz(payload.buzz_id, (buzz: Buzz) => {
+        if (buzz.response !== 'none') {
+          stopAllAlarms();
+          NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
+          cancelBuzzNotification(payload.buzz_id);
+          onDismiss();
+        }
+      });
+    }, 1500);
+    return () => {
+      clearTimeout(timer);
+      unsub?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload.buzz_id, onDismiss]);
 
+  // Android: Trigger native alarm immediately when this screen mounts.
+  // The BuzzerService poll may not have detected the buzz yet (up to 10s delay),
+  // so we explicitly call showBuzz to start the alarm right away.
+  // seenBuzzIds dedup in the native service prevents double-processing.
   useEffect(() => {
-    // Native BuzzerService handles alarm sound + vibration in all states.
-    // No JS alarm here to avoid double sound in foreground.
+    if (Platform.OS === 'android') {
+      NativeModules.BuzzerService?.showBuzz?.(
+        payload.buzz_id,
+        payload.from_user_id || '',
+        payload.from_user_name || 'User',
+        payload.reason || '',
+        payload.note || null,
+      ).catch(() => {});
+    }
     return () => {
-      NativeModules.BuzzerService?.stopAlarm();
+      stopAllAlarms();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-dismiss after 2 minutes if no response
   useEffect(() => {
     const timeout = setTimeout(() => {
-      NativeModules.BuzzerService?.stopAlarm();
+      stopAllAlarms();
       NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
       respondToBuzz(payload.buzz_id, 'dismissed').catch(() => {});
       cancelBuzzNotification(payload.buzz_id).catch(() => {});
       onDismiss();
     }, NO_RESPONSE_TIMEOUT_MS);
     return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload.buzz_id, onDismiss]);
 
-  const handleResponse = async (response: BuzzResponse) => {
-    NativeModules.BuzzerService?.stopAlarm();
+  const handleResponse = (response: BuzzResponse) => {
+    stopAllAlarms();
     NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
-    await respondToBuzz(payload.buzz_id, response);
-    await cancelBuzzNotification(payload.buzz_id);
+    // Dismiss immediately — don't block on network. The response is sent
+    // in the background. If it fails, the buzz auto-dismisses server-side
+    // after 2 minutes anyway.
+    respondToBuzz(payload.buzz_id, response).catch(() => {});
+    cancelBuzzNotification(payload.buzz_id).catch(() => {});
     onDismiss();
   };
 

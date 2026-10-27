@@ -82,7 +82,10 @@ class TokenRefreshWorker(
                         applicationContext.startService(serviceIntent)
                     }
                 } catch (e: Exception) {
+                    // Android 12+ can throw ForegroundServiceStartNotAllowedException
+                    // when the app is in a restricted background state
                     Log.e(TAG, "Failed to restart BuzzerService: ${e.message}")
+                    return Result.retry()
                 }
             }
         } catch (e: Exception) {

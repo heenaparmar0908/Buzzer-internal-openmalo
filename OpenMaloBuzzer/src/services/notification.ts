@@ -3,21 +3,17 @@ import notifee, {
   AndroidVisibility,
   EventType,
 } from '@notifee/react-native';
-import {NOTIFICATION_CHANNEL_ID, NOTIFICATION_CHANNEL_NAME, VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
+import {VOICEMAIL_CHANNEL_ID, VOICEMAIL_CHANNEL_NAME} from '../constants';
 import {BuzzPayload} from '../types';
 
 export const createNotificationChannel = async () => {
-  // Sound channel — used only by native BuzzerService alarm
-  await notifee.createChannel({
-    id: NOTIFICATION_CHANNEL_ID,
-    name: NOTIFICATION_CHANNEL_NAME,
-    importance: AndroidImportance.HIGH,
-    visibility: AndroidVisibility.PUBLIC,
-    sound: 'buzz_alarm',
-    vibration: true,
-    vibrationPattern: [300, 500, 200, 500],
-    bypassDnd: true,
-  });
+  // The buzz channel (openmalo_buzz) is created ONLY by the native
+  // BuzzerService.createBuzzChannel() in Kotlin, which sets USAGE_ALARM
+  // audio attributes and bypassDnd=true. Notifee's createChannel API
+  // does not support USAGE_ALARM and would overwrite the native channel
+  // with USAGE_NOTIFICATION, breaking DND bypass and alarm-stream routing.
+  // Do NOT create the buzz channel here.
+
   await notifee.createChannel({
     id: VOICEMAIL_CHANNEL_ID,
     name: VOICEMAIL_CHANNEL_NAME,

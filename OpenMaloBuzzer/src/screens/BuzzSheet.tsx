@@ -13,11 +13,11 @@ import {
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import Sound from 'react-native-sound';
 import {User, Buzz, BuzzResponse} from '../types';
 import {useReasons} from '../hooks/useReasons';
 import {useUsers} from '../hooks/useUsers';
 import {createBuzz, subscribeToBuzz, markEscalated, respondToBuzz} from '../services/firebase';
+import {supabase} from '../services/supabase';
 import {sendBuzzPush, sendBuzzCancelledPush, sendEscalationPush} from '../services/pushNotification';
 import {
   MAX_NOTE_LENGTH,
@@ -83,7 +83,6 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
   const sentReasonRef = useRef('');
   const sentNoteRef = useRef<string | null>(null);
   const unsubsRef = useRef<Record<string, () => void>>({});
-  const sentSoundRef = useRef<Sound | null>(null);
 
   const autoSendDone = useRef(false);
   useEffect(() => {
@@ -98,6 +97,31 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
     const timer = setInterval(() => setTick(t => t + 1), 1000);
     return () => clearInterval(timer);
   }, [buzzState, activeBuzzes.length]);
+
+  // Polling fallback: Supabase Realtime may drop the websocket on mobile/emulators.
+  // Poll every 3s to catch responses Realtime missed.
+  const activeBuzzesRef = useRef(activeBuzzes);
+  activeBuzzesRef.current = activeBuzzes;
+  useEffect(() => {
+    if (buzzState !== 'sent') return;
+    const poll = setInterval(() => {
+      const waiting = activeBuzzesRef.current.filter(b => b.response === 'none');
+      if (waiting.length === 0) return;
+      supabase.from('buzzes').select('id,response').in('id', waiting.map(b => b.id)).then(({data}) => {
+        if (!data) return;
+        const updates = data.filter((b: any) => b.response !== 'none');
+        if (updates.length > 0) {
+          setActiveBuzzes(prev =>
+            prev.map(b => {
+              const match = updates.find((u: any) => u.id === b.id);
+              return match ? {...b, response: match.response} : b;
+            }),
+          );
+        }
+      });
+    }, 3000);
+    return () => clearInterval(poll);
+  }, [buzzState]);
 
   // Per-buzz escalation
   useEffect(() => {
@@ -127,10 +151,6 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
   useEffect(() => {
     return () => {
       Object.values(unsubsRef.current).forEach(unsub => unsub());
-      if (sentSoundRef.current) {
-        sentSoundRef.current.stop();
-        sentSoundRef.current.release();
-      }
     };
   }, []);
 
@@ -158,6 +178,8 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
       escalated: false,
     };
 
+    const t1 = Date.now();
+    console.log(`[T1] Buzz send initiated at ${t1}`);
     let doc;
     try {
       doc = await createBuzz(buzzData);
@@ -165,9 +187,12 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
       Alert.alert('Buzz Failed', 'Could not send buzz. Check your internet connection and try again.');
       return;
     }
+    console.log(`[T2] Buzz created: ${doc.id} at ${Date.now()} (+${Date.now() - t1}ms)`);
 
     // Send FCM push via Supabase Edge Function (for killed/background state)
-    sendBuzzPush(targetUser.id, doc.id, sender.id, sender.name, reason, buzzNote).catch(() => {});
+    sendBuzzPush(targetUser.id, doc.id, sender.id, sender.name, reason, buzzNote)
+      .then(() => console.log(`[T4] FCM push sent for ${doc.id} at ${Date.now()} (+${Date.now() - t1}ms)`))
+      .catch(() => {});
 
     const newEntry: ActiveBuzzEntry = {
       id: doc.id,
@@ -180,16 +205,9 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
     setActiveBuzzes(prev => [...prev, newEntry]);
     setBuzzState('sent');
 
-    const sentSound = new Sound('buzz_alarm.wav', Sound.MAIN_BUNDLE, err => {
-      if (!err) {
-        sentSound.setVolume(0.5);
-        sentSound.play(() => {
-          sentSound.release();
-          if (sentSoundRef.current === sentSound) sentSoundRef.current = null;
-        });
-      }
-    });
-    sentSoundRef.current = sentSound;
+    // Short vibration only — no sound. Playing buzz_alarm.wav here caused
+    // the sender to play the same alarm as the receiver, sounding like a
+    // duplicate when both devices are in the same room.
     Vibration.vibrate(200);
 
     const unsub = subscribeToBuzz(doc.id, (buzz: Buzz) => {

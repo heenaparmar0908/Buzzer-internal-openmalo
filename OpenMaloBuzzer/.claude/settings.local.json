@@ -87,7 +87,32 @@
       "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5554 install \"$APK\")",
       "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 uninstall com.openmalobuzzer)",
       "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 shell pm uninstall com.openmalobuzzer)",
-      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 install /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/android/app/build/outputs/apk/release/app-release.apk)"
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s emulator-5556 install /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/android/app/build/outputs/apk/release/app-release.apk)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb connect:*)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb pair:*)",
+      "Bash(pkill -9 adb)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s adb-96442484710005T-ejW0BQ._adb-tls-connect._tcp uninstall com.openmalobuzzer 2>&1)",
+      "Bash(/Users/admin/Library/Android/sdk/platform-tools/adb -s 192.168.1.14:37735 shell pm list packages)",
+      "Bash(pod install:*)",
+      "Bash(xcodebuild -workspace OpenMaloBuzzer.xcworkspace -scheme OpenMaloBuzzer -configuration Debug -sdk iphonesimulator -arch arm64)",
+      "Bash(ruby:*)",
+      "Read(//Users/admin/Desktop/**)",
+      "Read(//Users/admin/**)",
+      "Bash(# Copy to iOS project\ncp /Users/admin/Downloads/GoogleService-Info.plist /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/ios/OpenMaloBuzzer/GoogleService-Info.plist\n\n# Add to Xcode project\nruby -e '\nrequire \"xcodeproj\"\nproject = Xcodeproj::Project.open\\(\"/Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/ios/OpenMaloBuzzer.xcodeproj\"\\)\ntarget = project.targets.find { |t| t.name == \"OpenMaloBuzzer\" }\ngroup = project.main_group.find_subpath\\(\"OpenMaloBuzzer\", true\\)\n\nexisting = group.files.find { |f| f.display_name == \"GoogleService-Info.plist\" }\nif existing\n  puts \"Already in project\"\nelse\n  ref = group.new_file\\(\"OpenMaloBuzzer/GoogleService-Info.plist\"\\)\n  target.resources_build_phase.add_file_reference\\(ref\\)\n  project.save\n  puts \"Added GoogleService-Info.plist to Xcode project\"\nend\n' 2>&1)",
+      "Bash(/dev/null find:*)",
+      "Bash(file /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/android/app/src/main/res/raw/*)",
+      "Bash(./gradlew compileDebugKotlin)",
+      "Bash(npx jest:*)",
+      "Bash(unzip -l app/build/outputs/apk/debug/app-debug.apk)",
+      "Bash(npm --version)",
+      "Bash(file android/app/src/main/res/raw/*)",
+      "Bash(npx eslint:*)",
+      "Bash(./gradlew assembleDebug --no-daemon)",
+      "Bash(find /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/android -maxdepth 3 -type f \\\\\\(-name *Test*.kt -o -name *Test*.java \\\\\\))",
+      "Bash(find /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer -maxdepth 2 -type f \\\\\\(-name *setupTest* -o -name *test*.ts -o -name *test*.tsx \\\\\\))",
+      "Bash(find /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/ios -name *.wav -o -name *.mp3)",
+      "Bash(find /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/ios -name *Tests* -o -name *Test*)",
+      "Bash(./gradlew assembleRelease --no-daemon)"
     ]
   }
 }
