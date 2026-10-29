@@ -60,6 +60,8 @@ class BuzzerService : Service() {
         const val PREF_ACTIVE_BUZZ_NOTE = "active_buzz_note"
         const val POLL_INTERVAL_MS = 10000L
         const val FCM_TOKEN_REFRESH_MS = 3600000L
+        const val WATCHDOG_INTERVAL_MS = 15 * 60 * 1000L // 15 minutes
+        const val WATCHDOG_REQUEST_CODE = 9998
         val RESTART_RETRY_DELAYS = longArrayOf(3000L, 10000L, 30000L, 60000L)
 
         /** Check if service has been alive recently (heartbeat within last 30s). */
@@ -81,6 +83,7 @@ class BuzzerService : Service() {
     private var audioFocusRequest: Any? = null // AudioFocusRequest on O+
     private var activeBuzzId: String? = null
     private val seenBuzzIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val seenLock = Object() // guards atomic check-then-mark to prevent race duplicates
     private val handler = Handler(Looper.getMainLooper())
 
     // Persistent dedup: survives process restart. Key = buzzId, value = timestamp when seen.
@@ -134,12 +137,20 @@ class BuzzerService : Service() {
     private var restartAttempt = 0
     private val userNameCache = mutableMapOf<String, String>()
 
+    private var watchdogCounter = 0
     private val pollRunnable = object : Runnable {
         override fun run() {
             currentUserId?.let { pollForBuzzes(it) }
             // Write heartbeat so the app can detect if the service was killed by OEM
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putLong(PREF_LAST_HEARTBEAT, System.currentTimeMillis()).apply()
+            // Re-schedule watchdog every ~5 minutes (every 30 poll cycles) to keep the
+            // alarm chain alive even if the service is about to be killed.
+            watchdogCounter++
+            if (watchdogCounter >= 30) {
+                watchdogCounter = 0
+                scheduleWatchdog()
+            }
             handler.postDelayed(this, POLL_INTERVAL_MS)
         }
     }
@@ -178,6 +189,7 @@ class BuzzerService : Service() {
             stopPolling()
             clearSavedUserId()
             cancelRestartAlarm()
+            cancelWatchdog()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -230,10 +242,12 @@ class BuzzerService : Service() {
             val fromUserName = intent?.getStringExtra(EXTRA_FROM_USER_NAME)
             val reason = intent?.getStringExtra(EXTRA_REASON) ?: ""
             val note = intent?.getStringExtra(EXTRA_NOTE)?.let { if (it.isEmpty() || it == "null") null else it }
-            if (buzzId != null && !isBuzzSeen(buzzId)) {
+            val firstSeen = if (buzzId != null) synchronized(seenLock) {
+                if (isBuzzSeen(buzzId)) false else { markBuzzSeen(buzzId); true }
+            } else false
+            if (buzzId != null && firstSeen) {
                 val t7 = System.currentTimeMillis()
                 Log.d(TAG, "[T7] Buzz processing start: $buzzId at $t7")
-                markBuzzSeen(buzzId)
                 // Cache sender name from FCM data so notification shows instantly
                 if (!fromUserName.isNullOrEmpty() && fromUserName != "User") {
                     userNameCache[fromUserId] = fromUserName
@@ -288,6 +302,7 @@ class BuzzerService : Service() {
             startPolling()
             refreshFcmToken(userId)
             cancelRestartAlarm()
+            scheduleWatchdog()
         }
 
         // Recover active buzz after process death — re-trigger alarm if the
@@ -482,9 +497,14 @@ class BuzzerService : Service() {
                     val buzz = arr.getJSONObject(i)
                     val buzzId = buzz.getString("id")
                     val createdAt = buzz.getLong("created_at")
-                    if (System.currentTimeMillis() - createdAt < 120000 && !isBuzzSeen(buzzId)) {
+                    if (System.currentTimeMillis() - createdAt < 120000) {
+                        // Atomic check-then-mark to prevent race with ACTION_SHOW_BUZZ on main thread
+                        val firstSeen = synchronized(seenLock) {
+                            if (isBuzzSeen(buzzId)) false
+                            else { markBuzzSeen(buzzId); true }
+                        }
+                        if (!firstSeen) continue
                         Log.d(TAG, "[POLL] New buzz detected via poll: $buzzId (age=${System.currentTimeMillis() - createdAt}ms)")
-                        markBuzzSeen(buzzId)
                         val pollFromUserId = buzz.optString("from_user_id", "")
                         val pollReason = buzz.optString("reason", "")
                         val pollNote = buzz.optString("note", null).let { if (it == "null") null else it }
@@ -527,7 +547,10 @@ class BuzzerService : Service() {
                         handler.post {
                             stopAlarm()
                             cancelAllNotificationsForBuzz(buzzId)
-                            if (activeBuzzId == buzzId) activeBuzzId = null
+                            if (activeBuzzId == buzzId) {
+                                activeBuzzId = null
+                                clearActiveBuzz()
+                            }
                             if (response == "cancelled") {
                                 showCancelledNotification(buzzId, fromUserId)
                             }
@@ -625,6 +648,49 @@ class BuzzerService : Service() {
         val restartIntent = Intent(this, BuzzerService::class.java).apply { action = ACTION_START }
         val pendingIntent = PendingIntent.getService(
             this, RESTART_REQUEST_CODE, restartIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE
+        )
+        if (pendingIntent != null) {
+            (getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(pendingIntent)
+        }
+    }
+
+    /**
+     * Periodic watchdog alarm that fires every 15 minutes independently of the service.
+     * If the service is dead when it fires, it restarts it. This survives OEM kills
+     * because AlarmManager (especially setAndAllowWhileIdle) is more resilient than
+     * the service process itself. Each alarm re-schedules the next one, creating a chain.
+     */
+    private fun scheduleWatchdog() {
+        try {
+            val userId = getSavedUserId() ?: return
+            val watchdogIntent = Intent(this, BuzzerService::class.java).apply {
+                action = ACTION_START
+                putExtra(EXTRA_USER_ID, userId)
+            }
+            val pendingIntent = PendingIntent.getService(
+                this, WATCHDOG_REQUEST_CODE, watchdogIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            // Use setAndAllowWhileIdle (inexact) — it's allowed without special permissions
+            // and is not subject to the exact alarm restrictions on Android 12+.
+            // On Android 14+ this has a minimum period of ~15 min which matches our interval.
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + WATCHDOG_INTERVAL_MS,
+                pendingIntent
+            )
+            Log.d(TAG, "Watchdog alarm scheduled in ${WATCHDOG_INTERVAL_MS / 60000} min")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to schedule watchdog: ${e.message}")
+        }
+    }
+
+    private fun cancelWatchdog() {
+        val watchdogIntent = Intent(this, BuzzerService::class.java).apply { action = ACTION_START }
+        val pendingIntent = PendingIntent.getService(
+            this, WATCHDOG_REQUEST_CODE, watchdogIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE
         )
         if (pendingIntent != null) {
@@ -773,7 +839,9 @@ class BuzzerService : Service() {
             mediaPlayer = null
         }
         return try {
-            val soundUri = Uri.parse("android.resource://$packageName/raw/buzz_alarm")
+            val soundName = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString("buzz_sound", "buzz_alarm") ?: "buzz_alarm"
+            val soundUri = Uri.parse("android.resource://$packageName/raw/$soundName")
             val player = MediaPlayer()
             player.setAudioAttributes(AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
@@ -1027,7 +1095,9 @@ class BuzzerService : Service() {
     private fun createBuzzChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
-            val soundUri = Uri.parse("android.resource://$packageName/raw/buzz_alarm")
+            val soundName = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString("buzz_sound", "buzz_alarm") ?: "buzz_alarm"
+            val soundUri = Uri.parse("android.resource://$packageName/raw/$soundName")
             val audioAttrs = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -1083,9 +1153,32 @@ class BuzzerService : Service() {
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         super.onTimeout(startId, fgsType)
-        Log.d(TAG, "FGS timeout (dataSync limit) — restarting")
+        Log.d(TAG, "FGS timeout (dataSync limit) — restarting immediately")
         restartScheduledByTimeout = true
-        scheduleRestartAlarm()
+        // Restart with minimum delay (0 = next alarm wakeup window, typically <1s)
+        // rather than the escalating delays used for unexpected kills.
+        try {
+            val userId = getSavedUserId()
+            if (userId != null) {
+                val restartIntent = Intent(this, BuzzerService::class.java).apply {
+                    action = ACTION_START
+                    putExtra(EXTRA_USER_ID, userId)
+                }
+                val pendingIntent = PendingIntent.getService(
+                    this, RESTART_REQUEST_CODE, restartIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 1000, // 1 second
+                    pendingIntent
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to schedule immediate restart from timeout: ${e.message}")
+            scheduleRestartAlarm() // fallback to normal retry
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

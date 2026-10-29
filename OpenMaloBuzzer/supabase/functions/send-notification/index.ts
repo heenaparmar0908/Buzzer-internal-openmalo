@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
           message: {
             token: fcm_token,
             data: data || {},
-            android: { priority: "high", ttl: "0s" },
+            android: { priority: "high" },
             apns: {
               headers: { "apns-priority": "10", "apns-push-type": "alert" },
               payload: {
@@ -125,6 +125,27 @@ Deno.serve(async (req) => {
     );
 
     const result = await fcmRes.json();
+
+    // Detect stale/expired FCM tokens from FCM v1 error format and return
+    // a structured error the client can easily match.
+    if (!fcmRes.ok) {
+      const fcmErrorCode = result?.error?.details?.find(
+        (d: any) => d["@type"] === "type.googleapis.com/google.firebase.fcm.v1.FcmError"
+      )?.errorCode;
+      if (fcmErrorCode === "UNREGISTERED" || fcmErrorCode === "INVALID_ARGUMENT") {
+        return new Response(JSON.stringify({
+          error: {
+            code: fcmErrorCode === "UNREGISTERED"
+              ? "messaging/registration-token-not-registered"
+              : "messaging/invalid-registration-token",
+          },
+        }), {
+          status: 200,  // 200 so client-side stale detection runs
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
     return new Response(JSON.stringify(result), {
       status: fcmRes.ok ? 200 : 500,
       headers: { "Content-Type": "application/json" },

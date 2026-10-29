@@ -5,6 +5,8 @@ import {useAuth} from './src/hooks/useAuth';
 import {createNotificationChannel, setupNotificationListeners, cancelBuzzNotification} from './src/services/notification';
 import {respondToBuzz, subscribeToIncomingBuzzes, subscribeToUsers, requestFcmPermission, getUserName} from './src/services/firebase';
 import {promptBatteryOptimization, promptDndAccess} from './src/services/batteryOptimization';
+import {getSelectedSound} from './src/services/soundPreference';
+import {supabase} from './src/services/supabase';
 import {BuzzPayload, User, Group} from './src/types';
 
 import LoginScreen from './src/screens/LoginScreen';
@@ -19,10 +21,11 @@ import GroupsScreen from './src/screens/GroupsScreen';
 import GroupBuzzSheet from './src/screens/GroupBuzzSheet';
 import VoiceCallScreen from './src/screens/VoiceCallScreen';
 import VoiceMailScreen from './src/screens/VoiceMailScreen';
+import BuzzSoundScreen from './src/screens/BuzzSoundScreen';
 
 const {BuzzerService} = NativeModules;
 
-type Screen = 'home' | 'buzz' | 'settings' | 'profile' | 'history' | 'groups' | 'group-buzz' | 'voice-call' | 'voice-mail';
+type Screen = 'home' | 'buzz' | 'settings' | 'profile' | 'history' | 'groups' | 'group-buzz' | 'voice-call' | 'voice-mail' | 'buzz-sound';
 
 function App() {
   const {user, loading, login, signUp, deleteAccount, updateProfile, changePin, logout} = useAuth();
@@ -35,6 +38,7 @@ function App() {
   const [autoSend, setAutoSend] = useState(false);
   const [pendingChecked, setPendingChecked] = useState(false);
   const [homeTab, setHomeTab] = useState<'recent' | 'people' | 'groups' | 'voice'>('recent');
+  const [realtimeEpoch, setRealtimeEpoch] = useState(0);
   const [editGroup, setEditGroup] = useState<Group | null>(null);
   const usersMapRef = useRef<Record<string, string>>({});
   const userRef = useRef(user);
@@ -56,6 +60,10 @@ function App() {
   useEffect(() => {
     if (user) {
       BuzzerService?.startService(user.id);
+      // Sync sound preference to native SharedPreferences
+      if (Platform.OS === 'android') {
+        getSelectedSound().then(s => BuzzerService?.setBuzzSound?.(s)).catch(() => {});
+      }
       promptBatteryOptimization();
       setTimeout(() => promptDndAccess(), 2000);
       const sub = AppState.addEventListener('change', (state) => {
@@ -65,6 +73,9 @@ function App() {
             // Fallback if health check not available
             BuzzerService?.startService(user.id);
           });
+          // Force Realtime re-subscribe — WebSocket often silently dies
+          // after backgrounding on mobile, causing buzzes to not arrive
+          setRealtimeEpoch(e => e + 1);
         }
       });
       return () => sub.remove();
@@ -94,27 +105,75 @@ function App() {
         console.log(`[T6-RT] Supabase Realtime received buzz ${buzz.id} at ${Date.now()}`);
         if (AppState.currentState === 'active') {
           const name = buzz.from_user_name || usersMapRef.current[buzz.from_user_id] || 'User';
-          setIncomingPayload({
-            buzz_id: buzz.id,
-            from_user_id: buzz.from_user_id,
-            from_user_name: name,
-            reason: buzz.reason,
-            note: buzz.note,
+          setIncomingPayload(prev => {
+            if (prev?.buzz_id === buzz.id) return prev;
+            return {
+              buzz_id: buzz.id,
+              from_user_id: buzz.from_user_id,
+              from_user_name: name,
+              reason: buzz.reason,
+              note: buzz.note,
+            };
           });
         }
         // Background/killed notifications are handled by FCM setBackgroundMessageHandler
       },
       (buzzId) => {
-        // Only cancel the notification here. Don't clear incomingPayload —
-        // IncomingBuzzScreen's own subscribeToBuzz listener handles dismissal.
-        // Clearing here can race with the FCM onMessage handler that sets
-        // the payload, causing "sound plays but no screen" when both fire
-        // in the same React batch.
+        // Clear incomingPayload if the removed buzz is the one being shown.
+        // This is safe: the race with FCM onMessage that originally motivated
+        // the "don't clear" comment is avoided by checking the buzz_id —
+        // a new buzz arriving via FCM will have a different buzz_id and won't
+        // be cleared. Clearing here ensures the screen + alarm tear down
+        // immediately when the Realtime UPDATE arrives (especially for
+        // cancellations, which are no longer suppressed by initialFetchIds).
+        setIncomingPayload(prev => {
+          if (prev?.buzz_id === buzzId) {
+            BuzzerService?.stopAlarm?.();
+            return null;
+          }
+          return prev;
+        });
         cancelBuzzNotification(buzzId).catch(() => {});
       },
     );
     return unsubscribe;
-  }, [user]);
+    // realtimeEpoch forces re-subscribe on app resume (WebSocket may have died)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, realtimeEpoch]);
+
+  // JS-side polling fallback: if FCM + Realtime both fail, poll Supabase
+  // directly every 5s to catch incoming buzzes. This ensures IncomingBuzzScreen
+  // shows even when push/websocket are down (the native BuzzerService poll
+  // only shows a notification, not the full-screen UI).
+  useEffect(() => {
+    if (!user) return;
+    const poll = setInterval(async () => {
+      if (AppState.currentState !== 'active') return;
+      // Skip if we're already showing a buzz
+      if (incomingPayload) return;
+      try {
+        const {data} = await supabase.from('buzzes').select('*')
+          .eq('to_user_id', user.id).eq('response', 'none');
+        if (data && data.length > 0) {
+          const buzz = data[0] as any;
+          if (Date.now() - buzz.created_at < 120000) {
+            const name = buzz.from_user_name || usersMapRef.current[buzz.from_user_id] || 'User';
+            setIncomingPayload(prev => {
+              if (prev?.buzz_id === buzz.id) return prev;
+              return {
+                buzz_id: buzz.id,
+                from_user_id: buzz.from_user_id,
+                from_user_name: name,
+                reason: buzz.reason,
+                note: buzz.note,
+              };
+            });
+          }
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(poll);
+  }, [user, incomingPayload]);
 
   useEffect(() => {
     try {
@@ -130,15 +189,20 @@ function App() {
           console.log(`[T6] FCM onMessage received buzz ${data.buzz_id} at ${Date.now()}`);
           // Show IncomingBuzzScreen immediately from FCM data — don't wait
           // for Supabase Realtime which may have variable latency.
-          setIncomingPayload({
-            buzz_id: data.buzz_id,
-            from_user_id: data.from_user_id || '',
-            from_user_name: data.from_user_name || 'User',
-            reason: data.reason || '',
-            note: data.note && data.note !== 'null' ? data.note : null,
+          setIncomingPayload(prev => {
+            if (prev?.buzz_id === data.buzz_id) return prev;
+            return {
+              buzz_id: data.buzz_id,
+              from_user_id: data.from_user_id || '',
+              from_user_name: data.from_user_name || 'User',
+              reason: data.reason || '',
+              note: data.note && data.note !== 'null' ? data.note : null,
+            };
           });
+          // Start native alarm immediately — don't wait for IncomingBuzzScreen
+          // mount which depends on React render cycle. Native seenBuzzIds dedup
+          // prevents double-processing if IncomingBuzzScreen also calls showBuzz.
           if (Platform.OS === 'android') {
-            // Also start native alarm (max volume, vibration, DND override)
             BuzzerService?.showBuzz?.(
               data.buzz_id,
               data.from_user_id || '',
@@ -171,7 +235,7 @@ function App() {
   useEffect(() => {
     const unsubscribe = setupNotificationListeners(
       (buzzId, response) => { respondToBuzz(buzzId, response as any).catch(() => {}); },
-      payload => { setIncomingPayload(payload); },
+      payload => { setIncomingPayload(prev => prev?.buzz_id === payload.buzz_id ? prev : payload); },
       () => { setSelectedUser(null); setScreen('voice-mail'); },
     );
     return unsubscribe;
@@ -204,12 +268,15 @@ function App() {
         if (data?.buzz_id) {
           const immediateName = data.from_user_name && data.from_user_name !== 'Someone'
             ? data.from_user_name : 'User';
-          setIncomingPayload({
-            buzz_id: data.buzz_id,
-            from_user_id: data.from_user_id,
-            from_user_name: immediateName,
-            reason: data.reason,
-            note: data.note || null,
+          setIncomingPayload(prev => {
+            if (prev?.buzz_id === data.buzz_id) return prev;
+            return {
+              buzz_id: data.buzz_id,
+              from_user_id: data.from_user_id,
+              from_user_name: immediateName,
+              reason: data.reason,
+              note: data.note || null,
+            };
           });
           setPendingChecked(true);
           // Resolve real name in background
@@ -239,12 +306,15 @@ function App() {
               return;
             }
             if (nData.buzz_id) {
-              setIncomingPayload({
-                buzz_id: nData.buzz_id as string,
-                from_user_id: (nData.from_user_id as string) || '',
-                from_user_name: (nData.from_user_name as string) || 'User',
-                reason: (nData.reason as string) || '',
-                note: nData.note as string || null,
+              setIncomingPayload(prev => {
+                if (prev?.buzz_id === nData.buzz_id) return prev;
+                return {
+                  buzz_id: nData.buzz_id as string,
+                  from_user_id: (nData.from_user_id as string) || '',
+                  from_user_name: (nData.from_user_name as string) || 'User',
+                  reason: (nData.reason as string) || '',
+                  note: nData.note as string || null,
+                };
               });
               setPendingChecked(true);
               return;
@@ -334,7 +404,8 @@ function App() {
           {screen === 'voice-call' && selectedUser && <VoiceCallScreen caller={user} receiver={selectedUser} onClose={() => { setSelectedUser(null); setScreen('home'); }} />}
           {screen === 'voice-mail' && <VoiceMailScreen currentUser={user} targetUser={selectedUser || undefined} onBack={() => { setSelectedUser(null); setScreen('home'); }} />}
           {screen === 'settings' && <SettingsScreen currentUser={user} onBack={() => setScreen('home')} />}
-          {screen === 'profile' && <ProfileScreen currentUser={user} onBack={() => setScreen('home')} onLogout={handleLogout} onDeleteAccount={handleDeleteAccount} onUpdateProfile={updateProfile} onChangePin={changePin} />}
+          {screen === 'profile' && <ProfileScreen currentUser={user} onBack={() => setScreen('home')} onLogout={handleLogout} onDeleteAccount={handleDeleteAccount} onUpdateProfile={updateProfile} onChangePin={changePin} onBuzzSound={() => setScreen('buzz-sound')} />}
+          {screen === 'buzz-sound' && <BuzzSoundScreen onBack={() => setScreen('profile')} />}
           {screen === 'history' && <HistoryScreen currentUser={user} onBack={() => setScreen('home')} />}
 
           {/* Incoming buzz overlay — renders on TOP of any screen without unmounting it */}

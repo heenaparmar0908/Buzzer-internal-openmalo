@@ -93,11 +93,13 @@ export const markEscalated = async (buzzId: string) => {
   await supabase.from('buzzes').update({escalated: true}).eq('id', buzzId);
 };
 
-export const subscribeToBuzz = (buzzId: string, callback: (buzz: Buzz) => void) => {
-  // Initial fetch
-  supabase.from('buzzes').select('*').eq('id', buzzId).single().then(({data}) => {
-    if (data) callback(data as Buzz);
-  });
+export const subscribeToBuzz = (buzzId: string, callback: (buzz: Buzz) => void, skipInitialFetch = false) => {
+  if (!skipInitialFetch) {
+    // Initial fetch
+    supabase.from('buzzes').select('*').eq('id', buzzId).single().then(({data}) => {
+      if (data) callback(data as Buzz);
+    });
+  }
 
   const channel = supabase
     .channel(uid())
@@ -211,9 +213,15 @@ export const subscribeToIncomingBuzzes = (
     .on('postgres_changes', {event: 'UPDATE', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, (payload) => {
       const buzz = payload.new as Buzz;
       if (buzz.response !== 'none' && onRemoved) {
-        if (initialFetchIds.has(buzz.id)) {
-          // This buzz was already shown by the initial fetch — suppress
-          // the first UPDATE to avoid immediately dismissing it.
+        if (buzz.response === 'cancelled') {
+          // Cancellation must NEVER be suppressed — always tear down
+          // the alarm/screen immediately regardless of initialFetchIds.
+          initialFetchIds.delete(buzz.id);
+          onRemoved(buzz.id);
+        } else if (initialFetchIds.has(buzz.id)) {
+          // Non-cancel updates from the initial fetch (e.g. receiver
+          // answered from notification): suppress the first UPDATE to
+          // avoid immediately dismissing a buzz that just appeared.
           initialFetchIds.delete(buzz.id);
         } else {
           onRemoved(buzz.id);

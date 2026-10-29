@@ -84,6 +84,14 @@ export const setupBackgroundHandler = () => {
           }]);
         }
 
+        // Read user's selected buzz sound
+        let buzzSoundName = 'buzz_alarm';
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          const stored = await AsyncStorage.getItem('@openmalo_buzz_sound');
+          if (stored) buzzSoundName = stored;
+        } catch {}
+
         // Create a notifee-managed buzz channel for the fallback path.
         // This is separate from the native BuzzerService.createBuzzChannel()
         // which uses USAGE_ALARM. Notifee cannot set USAGE_ALARM, but it CAN
@@ -91,12 +99,14 @@ export const setupBackgroundHandler = () => {
         // native channel ID here would cause notifee to overwrite the native
         // USAGE_ALARM settings with USAGE_NOTIFICATION, breaking DND bypass
         // for the native path. A dedicated fallback channel avoids this.
-        const FALLBACK_CHANNEL_ID = 'openmalo_buzz_fallback';
+        // Android locks channel settings after creation (Android 8+).
+        // Use a per-sound channel ID so changing sound preference takes effect.
+        const FALLBACK_CHANNEL_ID = `openmalo_buzz_fallback_${buzzSoundName}`;
         await notifee.createChannel({
           id: FALLBACK_CHANNEL_ID,
-          name: 'Buzzer Alerts (Fallback)',
+          name: `Buzzer Alerts (${buzzSoundName.replace('buzz_alarm', 'Sound').replace('_', ' ')})`,
           importance: AndroidImportance.HIGH,
-          sound: 'buzz_alarm',
+          sound: buzzSoundName,
           vibration: true,
           vibrationPattern: [0, 500, 200, 500, 200, 500],
         });
@@ -108,7 +118,7 @@ export const setupBackgroundHandler = () => {
           android: {
             channelId: FALLBACK_CHANNEL_ID,
             importance: AndroidImportance.HIGH,
-            sound: 'buzz_alarm',
+            sound: buzzSoundName,
             fullScreenAction: {
               id: 'incoming-buzz',
               launchActivity: 'default',
@@ -166,6 +176,15 @@ export const setupBackgroundHandler = () => {
 
       if (data.type === 'buzz_cancelled') {
         const cancellerName = data.from_user_name || 'User';
+        // Stop the native BuzzerService alarm (MediaPlayer + Vibrator).
+        // Without this, the native alarm keeps playing until the next poll
+        // cycle (up to 10s) detects the cancellation on the server.
+        if (Platform.OS === 'android') {
+          try {
+            const {NativeModules} = require('react-native');
+            NativeModules.BuzzerService?.stopAlarm?.();
+          } catch {}
+        }
         await notifee.cancelNotification(data.buzz_id);
         await notifee.displayNotification({
           title: 'Buzz cancelled',

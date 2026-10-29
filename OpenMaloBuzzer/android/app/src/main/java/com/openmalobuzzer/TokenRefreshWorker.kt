@@ -8,7 +8,10 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.tasks.await
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
@@ -71,6 +74,14 @@ class TokenRefreshWorker(
             val healthy = BuzzerService.isServiceHealthy(applicationContext)
             Log.d(TAG, "BuzzerService health check: ${if (healthy) "alive" else "DEAD — restarting"}")
             if (!healthy) {
+                // Service is dead — poll for pending buzzes directly as a safety net.
+                // If there's an unanswered buzz right now, we need to show it.
+                try {
+                    pollForPendingBuzzes(userId)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Worker poll for buzzes failed: ${e.message}")
+                }
+
                 try {
                     val serviceIntent = Intent(applicationContext, BuzzerService::class.java).apply {
                         action = BuzzerService.ACTION_START
@@ -94,5 +105,60 @@ class TokenRefreshWorker(
         }
 
         return Result.success()
+    }
+
+    /**
+     * Quick poll for unanswered buzzes when the service is dead.
+     * If found, starts the BuzzerService with ACTION_SHOW_BUZZ to trigger the alarm.
+     * This is a safety net — normally the foreground service or FCM handles this.
+     */
+    private fun pollForPendingBuzzes(userId: String) {
+        var conn: HttpURLConnection? = null
+        try {
+            val since = System.currentTimeMillis() - 120000 // last 2 minutes
+            val url = URL("${SupabaseConfig.URL}/rest/v1/buzzes?to_user_id=eq.$userId&response=eq.none&created_at=gte.$since&select=id,from_user_id,reason,note")
+            conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("apikey", SupabaseConfig.ANON_KEY)
+            conn.setRequestProperty("Authorization", "Bearer ${SupabaseConfig.ANON_KEY}")
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
+
+            if (conn.responseCode == 200) {
+                val reader = BufferedReader(InputStreamReader(conn.inputStream))
+                val response = reader.readText()
+                reader.close()
+                val arr = JSONArray(response)
+                if (arr.length() > 0) {
+                    val buzz = arr.getJSONObject(0) // show the most recent pending buzz
+                    val buzzId = buzz.getString("id")
+                    val fromUserId = buzz.optString("from_user_id", "")
+                    val reason = buzz.optString("reason", "")
+                    val note = buzz.optString("note", "").let { if (it == "null") "" else it }
+                    Log.d(TAG, "Worker found pending buzz $buzzId — triggering SHOW_BUZZ")
+                    try {
+                        val showIntent = Intent(applicationContext, BuzzerService::class.java).apply {
+                            action = BuzzerService.ACTION_SHOW_BUZZ
+                            putExtra(BuzzerService.EXTRA_BUZZ_ID, buzzId)
+                            putExtra(BuzzerService.EXTRA_FROM_USER_ID, fromUserId)
+                            putExtra(BuzzerService.EXTRA_FROM_USER_NAME, "User")
+                            putExtra(BuzzerService.EXTRA_REASON, reason)
+                            putExtra(BuzzerService.EXTRA_NOTE, note)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            applicationContext.startForegroundService(showIntent)
+                        } else {
+                            applicationContext.startService(showIntent)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Worker failed to start SHOW_BUZZ: ${e.message}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Worker poll error: ${e.message}")
+        } finally {
+            conn?.disconnect()
+        }
     }
 }

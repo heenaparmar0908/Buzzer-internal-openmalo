@@ -343,6 +343,13 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun setBuzzSound(soundName: String) {
+        reactApplicationContext.getSharedPreferences(
+            BuzzerService.PREFS_NAME, android.content.Context.MODE_PRIVATE
+        ).edit().putString("buzz_sound", soundName).apply()
+    }
+
+    @ReactMethod
     fun cancelBuzzNotification(buzzId: String) {
         val nm = reactApplicationContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         nm.cancel(buzzId.hashCode())

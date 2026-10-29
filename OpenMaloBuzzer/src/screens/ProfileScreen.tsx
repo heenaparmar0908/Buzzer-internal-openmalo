@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import {User} from '../types';
+import {BUZZ_SOUNDS, getSelectedSound} from '../services/soundPreference';
 
 interface Props {
   currentUser: User;
@@ -20,6 +21,7 @@ interface Props {
   onDeleteAccount: () => Promise<void>;
   onUpdateProfile: (data: {name?: string; phone?: string}) => Promise<void>;
   onChangePin: (currentPin: string, newPin: string) => Promise<void>;
+  onBuzzSound: () => void;
 }
 
 const ProfileScreen: React.FC<Props> = ({
@@ -29,6 +31,7 @@ const ProfileScreen: React.FC<Props> = ({
   onDeleteAccount,
   onUpdateProfile,
   onChangePin,
+  onBuzzSound,
 }) => {
   const insets = useSafeAreaInsets();
   const [name, setName] = useState(currentUser.name);
@@ -40,6 +43,15 @@ const ProfileScreen: React.FC<Props> = ({
   const [confirmPin, setConfirmPin] = useState('');
   const [changingPin, setChangingPin] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [selectedSoundLabel, setSelectedSoundLabel] = useState('Classic');
+
+  useEffect(() => {
+    getSelectedSound().then(id => {
+      const label = BUZZ_SOUNDS.find(s => s.id === id)?.label || 'Classic';
+      setSelectedSoundLabel(label);
+    });
+  }, []);
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [alertModal, setAlertModal] = useState<{
     visible: boolean;
@@ -217,6 +229,23 @@ const ProfileScreen: React.FC<Props> = ({
             ) : (
               <Text style={styles.saveBtnText}>Change PIN</Text>
             )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Buzz Sound */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>PREFERENCES</Text>
+          <TouchableOpacity style={styles.navRow} onPress={onBuzzSound} activeOpacity={0.7}>
+            <View style={styles.navRowLeft}>
+              <View style={styles.navRowIcon}>
+                <Icon name="notifications-active" size={20} color="#FF4D4D" />
+              </View>
+              <View>
+                <Text style={styles.navRowTitle}>Buzz Sound</Text>
+                <Text style={styles.navRowSub}>{selectedSoundLabel}</Text>
+              </View>
+            </View>
+            <Icon name="chevron-right" size={24} color="#555" />
           </TouchableOpacity>
         </View>
 
@@ -430,6 +459,26 @@ const styles = StyleSheet.create({
     borderColor: '#F44336',
   },
   deleteText: {color: '#F44336', fontSize: 18, fontWeight: '600'},
+  navRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1A1A1A',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  navRowLeft: {flexDirection: 'row', alignItems: 'center', gap: 12},
+  navRowIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#2a1515',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navRowTitle: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  navRowSub: {color: '#FF4D4D', fontSize: 13, fontWeight: '600', marginTop: 1},
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.7)',

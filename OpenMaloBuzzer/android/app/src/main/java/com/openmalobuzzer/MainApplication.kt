@@ -32,16 +32,19 @@ class MainApplication : Application(), ReactApplication {
 
   private fun scheduleTokenRefresh() {
     try {
+      // 15 minutes is the minimum allowed by WorkManager. This worker also
+      // checks service health and polls for pending buzzes as a safety net,
+      // so a shorter interval is important for reliability after OEM kills.
       val workRequest = PeriodicWorkRequestBuilder<TokenRefreshWorker>(
-        6, TimeUnit.HOURS
+        15, TimeUnit.MINUTES
       ).build()
 
       WorkManager.getInstance(this).enqueueUniquePeriodicWork(
         TokenRefreshWorker.WORK_NAME,
-        ExistingPeriodicWorkPolicy.KEEP,
+        ExistingPeriodicWorkPolicy.UPDATE,
         workRequest
       )
-      Log.d("MainApplication", "TokenRefreshWorker scheduled (every 6 hours)")
+      Log.d("MainApplication", "TokenRefreshWorker scheduled (every 15 minutes)")
     } catch (e: Exception) {
       Log.e("MainApplication", "Failed to schedule TokenRefreshWorker: ${e.message}")
     }

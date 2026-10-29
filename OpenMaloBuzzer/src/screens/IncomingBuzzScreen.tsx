@@ -6,6 +6,7 @@ import {BuzzPayload, BuzzResponse, Buzz} from '../types';
 import {respondToBuzz, subscribeToBuzz} from '../services/firebase';
 import {cancelBuzzNotification} from '../services/notification';
 import {NO_RESPONSE_TIMEOUT_MS} from '../constants';
+import {getSelectedSound, BUZZ_SOUNDS} from '../services/soundPreference';
 
 interface Props {
   payload: BuzzPayload;
@@ -39,37 +40,37 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
     Sound.setCategory('Playback');
-    const s = new Sound('buzz_alarm.wav', Sound.MAIN_BUNDLE, (err) => {
-      if (err) return;
-      s.setVolume(1.0);
-      s.setNumberOfLoops(-1); // loop indefinitely
-      s.play();
+    getSelectedSound().then(soundId => {
+      const file = BUZZ_SOUNDS.find(s => s.id === soundId)?.file || 'buzz_alarm.wav';
+      const s = new Sound(file, Sound.MAIN_BUNDLE, (err) => {
+        if (err) return;
+        s.setVolume(1.0);
+        s.setNumberOfLoops(-1); // loop indefinitely
+        s.play();
+      });
+      soundRef.current = s;
     });
-    soundRef.current = s;
     // Vibrate in a loop
     Vibration.vibrate([0, 500, 200, 500, 200, 500, 200, 500], true);
     return () => stopIOSAlarm();
   }, []);
 
   // Listen for response changes (sender cancelled, or already responded from notification).
-  // Delayed by 1.5s so the initial fetch in subscribeToBuzz doesn't immediately kill
-  // an alarm that just started — prevents "screen appears but no sound" symptom.
+  // Subscribe immediately with skipInitialFetch=true so we don't race with the alarm
+  // starting (the old 1.5s delay meant cancellations during that window were missed).
+  // The Realtime channel fires for any UPDATE after subscription — no initial fetch needed
+  // because the App-level subscribeToIncomingBuzzes and FCM handlers also cover the
+  // already-cancelled case.
   useEffect(() => {
-    let unsub: (() => void) | null = null;
-    const timer = setTimeout(() => {
-      unsub = subscribeToBuzz(payload.buzz_id, (buzz: Buzz) => {
-        if (buzz.response !== 'none') {
-          stopAllAlarms();
-          NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
-          cancelBuzzNotification(payload.buzz_id);
-          onDismiss();
-        }
-      });
-    }, 1500);
-    return () => {
-      clearTimeout(timer);
-      unsub?.();
-    };
+    const unsub = subscribeToBuzz(payload.buzz_id, (buzz: Buzz) => {
+      if (buzz.response !== 'none') {
+        stopAllAlarms();
+        NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
+        cancelBuzzNotification(payload.buzz_id);
+        onDismiss();
+      }
+    }, true);
+    return () => { unsub(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload.buzz_id, onDismiss]);
 
@@ -86,6 +87,14 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
         payload.reason || '',
         payload.note || null,
       ).catch(() => {});
+      // Cancel the native notification after a short delay — this full-screen
+      // UI is already handling the buzz, so the notification in the shade is
+      // redundant and causes "duplicate" perception.
+      const cancelTimer = setTimeout(() => {
+        NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
+        cancelBuzzNotification(payload.buzz_id).catch(() => {});
+      }, 1500);
+      return () => { clearTimeout(cancelTimer); stopAllAlarms(); };
     }
     return () => {
       stopAllAlarms();

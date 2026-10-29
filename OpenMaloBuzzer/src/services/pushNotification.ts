@@ -35,17 +35,22 @@ export const sendBuzzPush = async (
     });
     // If the Edge Function reports the token is invalid, mark it stale
     // so the sender-side UI can show a warning in the future.
-    if (res.ok) {
-      try {
-        const body = await res.json();
-        if (body?.error?.code === 'messaging/registration-token-not-registered' ||
-            body?.error?.code === 'messaging/invalid-registration-token') {
-          await supabase.from('user_tokens')
-            .update({fcm_token_stale: true})
-            .eq('user_id', toUserId);
-        }
-      } catch {}
-    }
+    // Check regardless of HTTP status — edge function returns structured
+    // error for stale tokens, but also handle raw FCM v1 errors as fallback.
+    try {
+      const body = await res.json();
+      const code = body?.error?.code;
+      const fcmV1Code = body?.error?.details?.find?.(
+        (d: any) => d?.['@type'] === 'type.googleapis.com/google.firebase.fcm.v1.FcmError'
+      )?.errorCode;
+      if (code === 'messaging/registration-token-not-registered' ||
+          code === 'messaging/invalid-registration-token' ||
+          fcmV1Code === 'UNREGISTERED' || fcmV1Code === 'INVALID_ARGUMENT') {
+        await supabase.from('user_tokens')
+          .update({fcm_token_stale: true})
+          .eq('user_id', toUserId);
+      }
+    } catch {}
   } catch (e: any) {
     console.warn('sendBuzzPush failed:', e?.message || e);
   }

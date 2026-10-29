@@ -112,7 +112,9 @@
       "Bash(find /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer -maxdepth 2 -type f \\\\\\(-name *setupTest* -o -name *test*.ts -o -name *test*.tsx \\\\\\))",
       "Bash(find /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/ios -name *.wav -o -name *.mp3)",
       "Bash(find /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/ios -name *Tests* -o -name *Test*)",
-      "Bash(./gradlew assembleRelease --no-daemon)"
+      "Bash(./gradlew assembleRelease --no-daemon)",
+      "Bash(unzip -l /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/android/app/build/outputs/apk/debug/app-debug.apk)",
+      "Bash(grep -rl HapticFeedback /Users/admin/Desktop/Buzzer-internal-openmalo/OpenMaloBuzzer/node_modules --include=*.js)"
     ]
   }
 }

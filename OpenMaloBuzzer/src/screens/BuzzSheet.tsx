@@ -162,6 +162,25 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
     return () => clearTimeout(timeout);
   }, [allResponded, showUserPicker]);
 
+  const checkInactiveAndSend = (targetUser: User, reason: string, buzzNote: string | null) => {
+    const offlineMs = Date.now() - (targetUser.last_seen_at || 0);
+    const INACTIVE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+    if (offlineMs > INACTIVE_THRESHOLD_MS) {
+      const days = Math.floor(offlineMs / (24 * 60 * 60 * 1000));
+      const label = days >= 1 ? `${days} day${days > 1 ? 's' : ''}` : 'over 24 hours';
+      Alert.alert(
+        'User Inactive',
+        `${targetUser.name} has been offline for ${label}. The buzz may not be delivered. Send anyway?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Send Anyway', onPress: () => sendBuzzToUser(targetUser, reason, buzzNote)},
+        ],
+      );
+    } else {
+      sendBuzzToUser(targetUser, reason, buzzNote);
+    }
+  };
+
   const sendBuzzToUser = async (targetUser: User, reason: string, buzzNote: string | null) => {
     sentReasonRef.current = reason;
     sentNoteRef.current = buzzNote;
@@ -220,10 +239,10 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
     unsubsRef.current[doc.id] = unsub;
   };
 
-  const sendBuzz = async () => {
+  const sendBuzz = () => {
     const reason = isOther ? customReason.trim() : selectedReason;
     if (!reason) return;
-    await sendBuzzToUser(receiver, reason, note.trim() || null);
+    checkInactiveAndSend(receiver, reason, note.trim() || null);
   };
 
   const handleCancelAll = async () => {
@@ -240,7 +259,7 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
 
   const handleAddUser = (targetUser: User) => {
     setShowUserPicker(false);
-    sendBuzzToUser(targetUser, sentReasonRef.current, sentNoteRef.current);
+    checkInactiveAndSend(targetUser, sentReasonRef.current, sentNoteRef.current);
   };
 
   const formatTime = (ms: number) => {
