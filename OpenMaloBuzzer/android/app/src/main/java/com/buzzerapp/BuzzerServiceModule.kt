@@ -375,12 +375,26 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
         for (n in nm.activeNotifications) {
             if (n.tag == buzzId) nm.cancel(n.tag, n.id)
         }
-        // Restore the low-priority service notification (buzz was using NOTIFICATION_ID slot)
+        // Restore the low-priority foreground service notification.
+        // The buzz notification uses NOTIFICATION_ID (the same slot as the
+        // service notification), so clearing it would leave the service
+        // without a foreground notification — Android would kill it.
+        // NOTE: Do NOT send ACTION_STOP_ALARM here — this method is called
+        // by IncomingBuzzScreen 1.5s after mount to clear the notification
+        // from the drawer (the full-screen UI is showing). The alarm must
+        // keep playing until the user responds or the 2-min timeout fires.
         try {
-            val intent = android.content.Intent(reactApplicationContext, BuzzerService::class.java).apply {
-                action = BuzzerService.ACTION_STOP_ALARM
+            val prefs = reactApplicationContext.getSharedPreferences(
+                BuzzerService.PREFS_NAME, android.content.Context.MODE_PRIVATE
+            )
+            val activeBuzz = prefs.getString(BuzzerService.PREF_ACTIVE_BUZZ_ID, null)
+            // Only restore service notification if no active buzz (alarm still playing)
+            if (activeBuzz == null) {
+                val restoreIntent = android.content.Intent(reactApplicationContext, BuzzerService::class.java).apply {
+                    action = BuzzerService.ACTION_STOP_ALARM
+                }
+                reactApplicationContext.startService(restoreIntent)
             }
-            reactApplicationContext.startService(intent)
         } catch (_: Exception) {}
     }
 

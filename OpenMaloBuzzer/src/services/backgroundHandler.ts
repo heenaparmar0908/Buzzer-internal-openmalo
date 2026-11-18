@@ -227,6 +227,11 @@ export const setupBackgroundHandler = () => {
             NativeModules.BuzzerAlarmModule?.stopAlarm?.();
           } else {
             NativeModules.BuzzerService?.stopAlarm?.();
+            // Cancel the system-generated FCM notification (tagged with buzz_id)
+            // notifee.cancelNotification only cancels notifee-managed notifications,
+            // but the buzz notification is now system-displayed (from FCM notification
+            // field). Cancel it via native NotificationManager using the tag.
+            NativeModules.BuzzerService?.cancelBuzzNotification?.(data.buzz_id);
           }
         } catch {}
         await notifee.cancelNotification(data.buzz_id);

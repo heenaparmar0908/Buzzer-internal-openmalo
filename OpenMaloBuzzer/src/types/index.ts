@@ -1,6 +1,6 @@
 export type UserRole = 'owner' | 'manager' | 'member';
 
-export type BuzzResponse = 'ack' | 'five_min' | 'busy' | 'cancelled' | 'dismissed' | 'none';
+export type BuzzResponse = 'ack' | 'five_min' | 'busy' | 'cancelled' | 'dismissed' | 'auto_dismissed' | 'none';
 
 export interface Tenant {
   id: string;

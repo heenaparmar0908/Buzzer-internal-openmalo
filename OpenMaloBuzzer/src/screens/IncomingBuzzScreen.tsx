@@ -82,7 +82,10 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
       try {
         const {data: buzzRow} = await supabase.from('buzzes').select('response')
           .eq('id', payload.buzz_id).single();
-        if (buzzRow && buzzRow.response !== 'none') {
+        // Dismiss if already responded/cancelled — but NOT for auto_dismissed,
+        // which means the native service timed out and the user may never have
+        // seen it. We want to show IncomingBuzzScreen so they can respond.
+        if (buzzRow && buzzRow.response !== 'none' && buzzRow.response !== 'auto_dismissed') {
           onDismiss();
           return;
         }
@@ -137,7 +140,10 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
   // already-cancelled case.
   useEffect(() => {
     const unsub = subscribeToBuzz(payload.buzz_id, (buzz: Buzz) => {
-      if (buzz.response !== 'none') {
+      // Dismiss on cancellation or manual response — but NOT auto_dismissed,
+      // which is the native service's 2-min timeout. If IncomingBuzzScreen is
+      // showing, the user is looking at it; let its own timeout handle dismissal.
+      if (buzz.response !== 'none' && buzz.response !== 'auto_dismissed') {
         stopAllAlarms();
         NativeModules.BuzzerService?.cancelBuzzNotification?.(payload.buzz_id);
         cancelBuzzNotification(payload.buzz_id);
@@ -158,7 +164,7 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
         try {
           const {data: buzzRow} = await supabase.from('buzzes').select('response')
             .eq('id', payload.buzz_id).single();
-          if (buzzRow && buzzRow.response !== 'none') {
+          if (buzzRow && buzzRow.response !== 'none' && buzzRow.response !== 'auto_dismissed') {
             onDismiss();
             return;
           }

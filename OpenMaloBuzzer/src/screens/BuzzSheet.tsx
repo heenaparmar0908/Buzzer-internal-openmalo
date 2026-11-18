@@ -53,6 +53,7 @@ const RESPONSE_CONFIG: Record<BuzzResponse, {label: string; color: string; icon:
   busy: {label: 'Busy', color: '#F44336', icon: 'cancel'},
   cancelled: {label: 'Cancelled', color: '#888', icon: 'block'},
   dismissed: {label: 'Not responded', color: '#FF9800', icon: 'warning'},
+  auto_dismissed: {label: 'Not responded', color: '#FF9800', icon: 'warning'},
   none: {label: 'Waiting...', color: '#555', icon: 'hourglass-empty'},
 };
 
@@ -296,7 +297,16 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
 
     // Send FCM push via Supabase Edge Function (for killed/background state)
     sendBuzzPush(targetUser.id, doc.id, sender.id, sender.name, reason, buzzNote, selectedSound)
-      .then(pushResult => console.log(`[T4] FCM push result for ${doc.id}: ${pushResult} at ${Date.now()} (+${Date.now() - t1}ms)`))
+      .then(pushResult => {
+        console.log(`[T4] FCM push result for ${doc.id}: ${pushResult} at ${Date.now()} (+${Date.now() - t1}ms)`);
+        if (pushResult === 'no_token') {
+          Alert.alert('Push Not Delivered', `${targetUser.name} has no push token registered. They will only see the buzz when they open the app.`);
+        } else if (pushResult === 'token_invalid') {
+          Alert.alert('Push Not Delivered', `${targetUser.name}'s push token is invalid. They will only see the buzz when they open the app.`);
+        } else if (pushResult === 'failed') {
+          Alert.alert('Push May Be Delayed', 'The notification could not be sent. The receiver will see the buzz when they open the app or via background polling.');
+        }
+      })
       .catch(() => {});
 
     const newEntry: ActiveBuzzEntry = {

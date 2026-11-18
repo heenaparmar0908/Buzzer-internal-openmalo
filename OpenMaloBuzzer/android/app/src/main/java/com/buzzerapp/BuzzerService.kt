@@ -55,6 +55,7 @@ class BuzzerService : Service() {
         const val BUZZ_CHANNEL_ID = "buzzer_alerts"
         const val BUZZ_VISUAL_CHANNEL_ID = "buzzer_visual"
         const val CANCELLED_CHANNEL_ID = "buzzer_cancelled"
+        const val MISSED_CHANNEL_ID = "buzzer_missed"
         const val VOICEMAIL_CHANNEL_ID = "buzzer_voicemail"
         const val PREFS_NAME = "buzzer_prefs"
         const val PREF_USER_ID = "active_user_id"
@@ -303,9 +304,10 @@ class BuzzerService : Service() {
                         Log.d(TAG, "Auto-dismissing buzz $buzzId after 2 min timeout")
                         stopAlarm()
                         cancelAllNotificationsForBuzz(buzzId)
+                        showMissedBuzzNotification(buzzId, fromUserId, reason)
                         activeBuzzId = null
                         clearActiveBuzz()
-                        respondToBuzzSupabase(buzzId, "dismissed")
+                        respondToBuzzSupabase(buzzId, "auto_dismissed")
                     }
                 }, 120000)
             }
@@ -376,9 +378,10 @@ class BuzzerService : Service() {
                                         Log.d(TAG, "Auto-dismissing recovered buzz $savedBuzzId after 2 min timeout")
                                         stopAlarm()
                                         cancelAllNotificationsForBuzz(savedBuzzId)
+                                        showMissedBuzzNotification(savedBuzzId, savedFrom, savedReason)
                                         activeBuzzId = null
                                         clearActiveBuzz()
-                                        respondToBuzzSupabase(savedBuzzId, "dismissed")
+                                        respondToBuzzSupabase(savedBuzzId, "auto_dismissed")
                                     }
                                 }, 120000)
                             }
@@ -404,9 +407,10 @@ class BuzzerService : Service() {
                                     Log.d(TAG, "Auto-dismissing recovered buzz $savedBuzzId after 2 min timeout")
                                     stopAlarm()
                                     cancelAllNotificationsForBuzz(savedBuzzId)
+                                    showMissedBuzzNotification(savedBuzzId, savedFrom, savedReason)
                                     activeBuzzId = null
                                     clearActiveBuzz()
-                                    respondToBuzzSupabase(savedBuzzId, "dismissed")
+                                    respondToBuzzSupabase(savedBuzzId, "auto_dismissed")
                                 }
                             }, 120000)
                         }
@@ -423,9 +427,10 @@ class BuzzerService : Service() {
                                     Log.d(TAG, "Auto-dismissing recovered buzz $savedBuzzId after 2 min timeout")
                                     stopAlarm()
                                     cancelAllNotificationsForBuzz(savedBuzzId)
+                                    showMissedBuzzNotification(savedBuzzId, savedFrom, savedReason)
                                     activeBuzzId = null
                                     clearActiveBuzz()
-                                    respondToBuzzSupabase(savedBuzzId, "dismissed")
+                                    respondToBuzzSupabase(savedBuzzId, "auto_dismissed")
                                 }
                             }, 120000)
                         }
@@ -583,9 +588,10 @@ class BuzzerService : Service() {
                                     Log.d(TAG, "Auto-dismissing buzz $buzzId after 2 min timeout")
                                     stopAlarm()
                                     cancelAllNotificationsForBuzz(buzzId)
+                                    showMissedBuzzNotification(buzzId, pollFromUserId, pollReason)
                                     activeBuzzId = null
                                     clearActiveBuzz()
-                                    respondToBuzzSupabase(buzzId, "dismissed")
+                                    respondToBuzzSupabase(buzzId, "auto_dismissed")
                                 }
                             }, 120000)
                         }
@@ -1181,6 +1187,41 @@ class BuzzerService : Service() {
         // Restore the low-priority foreground service notification so Android
         // doesn't kill the service for lacking a foreground notification.
         restoreServiceNotification()
+    }
+
+    /**
+     * Show a persistent "Missed buzz" notification after auto-dismiss.
+     * Without this, the buzz disappears completely after 2 min and the user
+     * never knows they were buzzed (especially if the phone was in a pocket).
+     */
+    private fun showMissedBuzzNotification(buzzId: String, fromUserId: String, reason: String) {
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            // Create a low-priority channel for missed buzzes (no sound/vibration)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val ch = NotificationChannel(MISSED_CHANNEL_ID, "Missed Buzzes", NotificationManager.IMPORTANCE_DEFAULT)
+                ch.setSound(null, null)
+                ch.enableVibration(false)
+                nm.createNotificationChannel(ch)
+            }
+            val senderName = userNameCache[fromUserId] ?: "Someone"
+            val launchIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(this, buzzId.hashCode() + 100, launchIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val notification = NotificationCompat.Builder(this, MISSED_CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("Missed buzz from $senderName")
+                .setContentText(reason)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+            // Use a unique notification ID so it doesn't replace the foreground service notification
+            nm.notify(buzzId.hashCode() + 500, notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "showMissedBuzzNotification failed: ${e.message}")
+        }
     }
 
     private fun restoreServiceNotification() {

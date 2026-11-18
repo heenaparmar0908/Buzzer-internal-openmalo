@@ -107,60 +107,79 @@ Deno.serve(async (req) => {
       ? `${data?.from_user_name || "User"} cancelled the buzz`
       : undefined;
 
-    // Build platform-specific FCM message:
-    // iOS: notification message (with `notification` field) so sound plays in killed state
-    // Android: data-only message so background handler fires → BuzzerService alarm
+    // Build FCM message with BOTH notification + data fields.
+    //
+    // WHY: Data-only messages require our background handler to run, which
+    // fails when Android OEMs (Xiaomi, Huawei, Samsung) restrict the app
+    // or after long inactivity. WhatsApp/Telegram use notification messages
+    // which the SYSTEM displays automatically — no app code needed.
+    //
+    // BEHAVIOR:
+    //   Foreground: onMessage receives both → our code handles it (full alarm)
+    //   Background/Killed: system shows notification with channel sound →
+    //     user taps → app opens → IncomingBuzzScreen with full alarm
+    //   Service alive: native polling catches buzz 0-10s later → full alarm
+    //
+    // EXCEPTION: buzz_cancelled stays data-only so our handler can cancel
+    //   the original notification and stop the alarm.
     const message: Record<string, any> = {
       token: fcm_token,
       data: data || {},
     };
 
-    if (isIOS || isUnknown) {
-      // iOS: notification with sound so the buzzer alarm plays on arrival.
-      message.apns = {
-        headers: {
-          "apns-priority": "10",
-          "apns-push-type": data?.type === "buzz_cancelled" ? "background" : "alert",
-          ...(data?.buzz_id ? { "apns-collapse-id": data.buzz_id } : {}),
-        },
-        payload: {
-          aps: {
-            ...(alertTitle ? { alert: { title: alertTitle, body: alertBody } } : {}),
-            ...(data?.type === "buzz" ? {
-              sound: `${data?.sound_id || "buzz_alarm"}.wav`,
-              "interruption-level": "time-sensitive",
-              "category": "buzz_actions",
-            } : data?.type === "voice_message" ? {
-              sound: "default",
-            } : {}),
-            ...(data?.type === "buzz_cancelled" ? { "content-available": 1 } : {}),
-          },
-        },
-      };
-      if (isUnknown) {
-        message.android = { priority: "high" };
-      }
-    } else {
-      // Data-only message for Android — background handler fires in all states.
-      message.android = { priority: "high" };
-      message.apns = {
-        headers: {
-          "apns-priority": "10",
-          "apns-push-type": "alert",
-          ...(data?.buzz_id ? { "apns-collapse-id": data.buzz_id } : {}),
-        },
-        payload: {
-          aps: {
-            ...(data?.type === "buzz_cancelled" ? { "content-available": 1 } : {}),
-            sound: data?.type === "buzz"
-              ? `${data?.sound_id || "buzz_alarm"}.wav`
-              : data?.type === "voice_message" ? "default" : undefined,
-            alert: { title: alertTitle, body: alertBody },
-            ...(data?.type === "buzz" ? { "interruption-level": "time-sensitive", "category": "buzz_actions" } : {}),
-          },
-        },
+    const isBuzzOrVoice = data?.type === "buzz" || data?.type === "voice_message";
+    const isCancellation = data?.type === "buzz_cancelled";
+    const buzzSoundName = data?.sound_id || "buzz_alarm";
+
+    // --- Notification field (system-displayed, like WhatsApp) ---
+    // Added for buzz and voice_message types on ALL platforms.
+    // Cancellations stay data-only so the handler can cancel the notification.
+    if (isBuzzOrVoice && alertTitle) {
+      message.notification = {
+        title: alertTitle,
+        body: alertBody,
       };
     }
+
+    // --- Android-specific overrides ---
+    if (!isIOS) {
+      message.android = {
+        priority: "high",
+        ...(isBuzzOrVoice ? {
+          notification: {
+            channel_id: data?.type === "buzz" ? "buzzer_alerts" : "buzzer_voicemail",
+            sound: data?.type === "buzz" ? buzzSoundName : "default",
+            default_vibrate_timings: false,
+            vibrate_timings: ["0s", "0.5s", "0.2s", "0.5s", "0.2s", "0.5s"],
+            notification_count: 1,
+            // Tag allows cancellation to find and remove this notification
+            ...(data?.buzz_id ? { tag: data.buzz_id } : {}),
+          },
+        } : {}),
+      };
+    }
+
+    // --- APNs/iOS overrides ---
+    message.apns = {
+      headers: {
+        "apns-priority": "10",
+        "apns-push-type": isCancellation ? "background" : "alert",
+        ...(data?.buzz_id ? { "apns-collapse-id": data.buzz_id } : {}),
+      },
+      payload: {
+        aps: {
+          ...(alertTitle ? { alert: { title: alertTitle, body: alertBody } } : {}),
+          ...(data?.type === "buzz" ? {
+            sound: `${buzzSoundName}.wav`,
+            "interruption-level": "time-sensitive",
+            "category": "buzz_actions",
+          } : data?.type === "voice_message" ? {
+            sound: "default",
+          } : {}),
+          ...(isCancellation ? { "content-available": 1 } : {}),
+        },
+      },
+    };
 
     const fcmRes = await fetch(
       `https://fcm.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/messages:send`,

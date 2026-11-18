@@ -282,57 +282,100 @@ export const subscribeToIncomingBuzzes = (
   // immediate UPDATE events (they were already handled). New buzzes
   // that arrive after the initial fetch pass through immediately —
   // no blanket 2-second delay that would block real-time cancellations.
-  const initialFetchIds = new Set<string>();
+  let initialFetchIds = new Set<string>();
+  let channel: ReturnType<typeof supabase.channel> | null = null;
+  let destroyed = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Initial fetch for existing pending buzzes
-  supabase.from('buzzes').select('*')
-    .eq('to_user_id', userId)
-    .eq('response', 'none')
-    .then(({data}) => {
-      if (data) {
-        data.forEach(buzz => {
-          const ts = toEpochMs((buzz as Buzz).created_at);
-          // 10-minute window on initial fetch (matches MISSED_BUZZ_WINDOW_MS).
-          // Previous 2-min window was too short — on app resume after
-          // backgrounding, buzzes sent 3-10 min ago were silently dropped.
-          if (ts > 0 && Date.now() - ts < 600000) {
-            initialFetchIds.add((buzz as Buzz).id);
-            callback(buzz as Buzz);
-          }
-        });
-      }
-    });
-
-  const channel = supabase
-    .channel(uid())
-    .on('postgres_changes', {event: 'INSERT', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, (payload) => {
-      const buzz = payload.new as Buzz;
-      const ts = toEpochMs(buzz.created_at);
-      if (buzz.response === 'none' && ts > 0 && Date.now() - ts < 600000) {
-        callback(buzz);
-      }
-    })
-    .on('postgres_changes', {event: 'UPDATE', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, (payload) => {
-      const buzz = payload.new as Buzz;
-      if (buzz.response !== 'none' && onRemoved) {
-        if (buzz.response === 'cancelled') {
-          // Cancellation must NEVER be suppressed — always tear down
-          // the alarm/screen immediately regardless of initialFetchIds.
-          initialFetchIds.delete(buzz.id);
-          onRemoved(buzz.id);
-        } else if (initialFetchIds.has(buzz.id)) {
-          // Non-cancel updates from the initial fetch (e.g. receiver
-          // answered from notification): suppress the first UPDATE to
-          // avoid immediately dismissing a buzz that just appeared.
-          initialFetchIds.delete(buzz.id);
-        } else {
-          onRemoved(buzz.id);
+  const doInitialFetch = () => {
+    supabase.from('buzzes').select('*')
+      .eq('to_user_id', userId)
+      .in('response', ['none', 'auto_dismissed'])
+      .then(({data}) => {
+        if (data && !destroyed) {
+          data.forEach(buzz => {
+            const ts = toEpochMs((buzz as Buzz).created_at);
+            // 10-minute window on initial fetch (matches MISSED_BUZZ_WINDOW_MS).
+            if (ts > 0 && Date.now() - ts < 600000) {
+              initialFetchIds.add((buzz as Buzz).id);
+              callback(buzz as Buzz);
+            }
+          });
         }
-      }
-    })
-    .subscribe();
+      });
+  };
 
-  return () => { supabase.removeChannel(channel); };
+  const scheduleReconnect = (delayMs = 3000) => {
+    if (destroyed || reconnectTimer) return;
+    console.log(`[Buzz-RT] Reconnecting in ${delayMs}ms...`);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (destroyed) return;
+      console.log('[Buzz-RT] Reconnecting buzz subscription...');
+      initialFetchIds = new Set();
+      if (channel) {
+        try { supabase.removeChannel(channel); } catch {}
+        channel = null;
+      }
+      // setupChannel() triggers doInitialFetch() in SUBSCRIBED callback
+      setupChannel();
+    }, delayMs);
+  };
+
+  const setupChannel = () => {
+    if (destroyed) return;
+    channel = supabase
+      .channel(uid())
+      .on('postgres_changes', {event: 'INSERT', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, (payload) => {
+        const buzz = payload.new as Buzz;
+        const ts = toEpochMs(buzz.created_at);
+        if (buzz.response === 'none' && ts > 0 && Date.now() - ts < 600000) {
+          console.log(`[Buzz-RT] INSERT buzz ${buzz.id}`);
+          callback(buzz);
+        }
+      })
+      .on('postgres_changes', {event: 'UPDATE', schema: 'public', table: 'buzzes', filter: `to_user_id=eq.${userId}`}, (payload) => {
+        const buzz = payload.new as Buzz;
+        // Don't treat auto_dismissed as "removed" — the native service timed out
+        // but the user may not have seen it. Let checkPending recover it.
+        if (buzz.response !== 'none' && buzz.response !== 'auto_dismissed' && onRemoved) {
+          if (buzz.response === 'cancelled') {
+            // Cancellation must NEVER be suppressed — always tear down
+            // the alarm/screen immediately regardless of initialFetchIds.
+            initialFetchIds.delete(buzz.id);
+            onRemoved(buzz.id);
+          } else if (initialFetchIds.has(buzz.id)) {
+            // Non-cancel updates from the initial fetch (e.g. receiver
+            // answered from notification): suppress the first UPDATE to
+            // avoid immediately dismissing a buzz that just appeared.
+            initialFetchIds.delete(buzz.id);
+          } else {
+            onRemoved(buzz.id);
+          }
+        }
+      })
+      .subscribe((status: string, err?: Error) => {
+        console.log(`[Buzz-RT] Channel: ${status}${err ? ` (${err.message})` : ''}`);
+        if (status === 'SUBSCRIBED') {
+          // Fetch existing buzzes AFTER the channel is active.
+          // This eliminates the race where a buzz inserted between
+          // the REST query and channel activation is missed by both.
+          doInitialFetch();
+        }
+        if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          scheduleReconnect();
+        }
+      });
+  };
+
+  // Subscribe first — initial fetch happens in SUBSCRIBED callback.
+  setupChannel();
+
+  return () => {
+    destroyed = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (channel) supabase.removeChannel(channel);
+  };
 };
 
 export const subscribeToNewVoiceMails = (

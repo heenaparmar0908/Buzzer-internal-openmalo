@@ -89,7 +89,17 @@ function App() {
           setRealtimeEpoch(e => e + 1);
         }
       });
-      return () => sub.remove();
+      // Periodic Realtime refresh: force re-subscribe every 120s to
+      // catch silent WebSocket deaths that don't fire error events.
+      // On mobile, TCP connections can go zombie (NAT table expiry,
+      // cellular handoff) without triggering a close event.
+      const realtimeRefresh = setInterval(() => {
+        if (AppState.currentState === 'active') {
+          console.log('[Buzz-Health] Periodic Realtime refresh');
+          setRealtimeEpoch(e => e + 1);
+        }
+      }, 120000);
+      return () => { sub.remove(); clearInterval(realtimeRefresh); };
     }
     // Only stop service after loading is complete and user is definitely null (logged out)
     // Don't stop during initial load — native service may already be running
@@ -167,13 +177,14 @@ function App() {
       if (incomingPayload) return;
       try {
         const {data} = await supabase.from('buzzes').select('*')
-          .eq('to_user_id', user.id).eq('response', 'none')
+          .eq('to_user_id', user.id).in('response', ['none', 'auto_dismissed'])
           .order('created_at', {ascending: false}).limit(1);
         if (data && data.length > 0) {
           const buzz = data[0] as any;
           if (!buzz.id) return; // Guard against malformed rows
           const ts = toEpochMs(buzz.created_at);
           if (ts > 0 && Date.now() - ts <= MISSED_BUZZ_WINDOW_MS) {
+            console.log(`[Buzz-Poll] Found pending buzz ${buzz.id} via JS polling (age=${Math.round((Date.now() - ts) / 1000)}s)`);
             const name = buzz.from_user_name || usersMapRef.current[buzz.from_user_id] || 'User';
             setIncomingPayload(prev => {
               if (prev?.buzz_id === buzz.id) return prev;
@@ -201,9 +212,11 @@ function App() {
       const unsub = onMessage(messaging, (remoteMessage: any) => {
         const data = remoteMessage.data;
         if (!data) return;
-        // Don't process buzzes before auth is complete — checkPending
-        // will pick them up once the user is loaded.
-        if (!userRef.current) return;
+        // Process buzzes even during auth loading — the native alarm
+        // starts immediately via BuzzerService.showBuzz, and
+        // incomingPayload will render IncomingBuzzScreen once auth
+        // completes. Previously this returned early, dropping FCM
+        // messages that arrived during the brief cold-start window.
         if (data.type === 'buzz' && data.buzz_id) {
           console.log(`[T6] FCM onMessage received buzz ${data.buzz_id} at ${Date.now()}`);
           // Show IncomingBuzzScreen immediately from FCM data — don't wait
@@ -233,6 +246,7 @@ function App() {
           }
         }
         if (data.type === 'buzz_cancelled' && data.buzz_id) {
+          console.log(`[Buzz-FCM] Received cancellation for ${data.buzz_id}`);
           // Only stop the alarm if the cancelled buzz is the one currently
           // active. Without this check, cancelling an old already-answered
           // buzz would kill a newer buzz's alarm.
@@ -327,6 +341,7 @@ function App() {
         }
         const data = await BuzzerService?.getPendingBuzz?.();
         if (data?.buzz_id) {
+          console.log(`[Buzz-CheckPending] Native pending buzz: ${data.buzz_id}`);
           const immediateName = data.from_user_name && data.from_user_name !== 'Someone'
             ? data.from_user_name : 'User';
           setIncomingPayload(prev => {
@@ -369,6 +384,7 @@ function App() {
               return;
             }
             if (nData.buzz_id) {
+              console.log(`[Buzz-CheckPending] FCM initial notification: ${nData.buzz_id}`);
               setIncomingPayload(prev => {
                 if (prev?.buzz_id === nData.buzz_id) return prev;
                 return {
@@ -399,6 +415,7 @@ function App() {
               return;
             }
             if (nData.buzz_id) {
+              console.log(`[Buzz-CheckPending] Notifee initial notification: ${nData.buzz_id}`);
               setIncomingPayload(prev => {
                 if (prev?.buzz_id === nData.buzz_id) return prev;
                 return {
@@ -425,6 +442,7 @@ function App() {
             await AsyncStorage.removeItem('@buzzer_pending_tap');
             const parsed = JSON.parse(tapData);
             if (parsed.buzz_id) {
+              console.log(`[Buzz-CheckPending] AsyncStorage pending tap: ${parsed.buzz_id}`);
               setIncomingPayload(prev => {
                 if (prev?.buzz_id === parsed.buzz_id) return prev;
                 return parsed;
@@ -443,7 +461,7 @@ function App() {
         // instead of a loud alarm. Never silently drop a buzz.
         try {
           const {data: missed} = await supabase.from('buzzes').select('*')
-            .eq('to_user_id', userRef.current?.id || '').eq('response', 'none')
+            .eq('to_user_id', userRef.current?.id || '').in('response', ['none', 'auto_dismissed'])
             .order('created_at', {ascending: false});
           if (missed && missed.length > 0) {
             // Show the newest buzz first. Remaining buzzes will be picked
@@ -452,6 +470,7 @@ function App() {
             const buzz = missed[0] as any;
             const ts = toEpochMs(buzz.created_at);
             if (buzz.id) {
+              console.log(`[Buzz-CheckPending] Safety-net query found buzz ${buzz.id} (age=${ts ? Math.round((Date.now() - ts) / 1000) : '?'}s)`);
               const name = buzz.from_user_name || usersMapRef.current[buzz.from_user_id] || 'User';
               setIncomingPayload(prev => {
                 if (prev?.buzz_id === buzz.id) return prev;
