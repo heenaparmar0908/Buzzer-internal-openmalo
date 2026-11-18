@@ -75,13 +75,12 @@ export const signup = async (
   const existingAnywhere = await getUserByPhone(phone);
   if (existingAnywhere) throw new Error('This mobile number is already registered');
 
-  let tenantId: string | undefined;
-  if (tenantCode) {
-    const tenant = await getTenantByCode(tenantCode);
-    if (!tenant) throw new Error('Invalid company code');
-    tenantId = tenant.id;
-    await storeTenantCode(tenantCode);
-  }
+  if (!tenantCode?.trim()) throw new Error('Company code is required');
+  const tenant = await getTenantByCode(tenantCode.trim());
+  if (!tenant) throw new Error('Invalid company code');
+  if (!tenant.id) throw new Error('Tenant has no ID');
+  const tenantId = tenant.id;
+  await storeTenantCode(tenantCode.trim());
 
   // Remove any inactive user with same phone (soft-deleted accounts)
   await removeInactiveByPhone(phone, tenantId);
@@ -94,7 +93,7 @@ export const signup = async (
     role,
     last_seen_at: Date.now(),
     is_active: true,
-    tenant_id: tenantId || '',
+    tenant_id: tenantId,
   };
 
   const docRef = await addUser(userData);
