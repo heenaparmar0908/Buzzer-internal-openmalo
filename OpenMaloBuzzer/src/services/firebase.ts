@@ -161,7 +161,12 @@ export const flushPendingResponses = async () => {
     const remaining: typeof pending = [];
     for (const p of pending) {
       if (Date.now() - p.ts > 600000) continue; // drop entries older than 10 min
-      const {error} = await supabase.from('buzzes').update({response: p.response, responded_at: p.ts}).eq('id', p.buzzId);
+      // Only overwrite if response is still 'none' or 'auto_dismissed' — never
+      // overwrite a manual response like 'cancelled' with a stale queued response.
+      const {error} = await supabase.from('buzzes')
+        .update({response: p.response, responded_at: p.ts})
+        .eq('id', p.buzzId)
+        .in('response', ['none', 'auto_dismissed']);
       if (error) remaining.push(p);
     }
     if (remaining.length > 0) {

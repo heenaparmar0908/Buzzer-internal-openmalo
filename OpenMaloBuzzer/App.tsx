@@ -481,7 +481,7 @@ function App() {
                   reason: buzz.reason,
                   note: buzz.note,
                   sound_id: buzz.sound_id || null,
-                  created_at: ts || null,
+                  created_at: ts || Date.now(),
                 };
               });
               setPendingChecked(true);
@@ -584,7 +584,7 @@ function App() {
           {screen === 'history' && <HistoryScreen currentUser={user} onBack={() => setScreen('home')} />}
 
           {/* Incoming buzz overlay — renders on TOP of any screen without unmounting it */}
-          {incomingPayload && <IncomingBuzzScreen payload={incomingPayload} onDismiss={handleDismissIncoming} />}
+          {incomingPayload && <IncomingBuzzScreen key={incomingPayload.buzz_id} payload={incomingPayload} onDismiss={handleDismissIncoming} />}
         </>
       )}
     </SafeAreaProvider>
