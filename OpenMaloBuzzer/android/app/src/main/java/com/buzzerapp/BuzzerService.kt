@@ -546,7 +546,11 @@ class BuzzerService : Service() {
             put("response", response)
             put("responded_at", System.currentTimeMillis())
         }
-        supabasePatch("buzzes?id=eq.$buzzId", body)
+        // Only update if response is still 'none' — never overwrite a manual
+        // response (ack, busy, five_min, cancelled) with an auto-dismiss.
+        // Without this guard, a sender cancellation at T+90s could be overwritten
+        // by auto_dismissed at T+120s, causing the cancelled buzz to reappear.
+        supabasePatch("buzzes?id=eq.$buzzId&response=eq.none", body)
     }
 
     private fun pollForBuzzes(userId: String, maxAgeMs: Long = 120000L) {
