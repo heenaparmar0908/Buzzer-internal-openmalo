@@ -150,7 +150,7 @@ Deno.serve(async (req) => {
             channel_id: data?.type === "buzz" ? "buzzer_alerts" : "buzzer_voicemail",
             sound: data?.type === "buzz" ? buzzSoundName : "default",
             default_vibrate_timings: false,
-            vibrate_timings: ["0s", "0.5s", "0.2s", "0.5s", "0.2s", "0.5s"],
+            vibrate_timings: ["0s", "0.500s", "0.200s", "0.500s", "0.200s", "0.500s"],
             notification_count: 1,
             // Tag allows cancellation to find and remove this notification
             ...(data?.buzz_id ? { tag: data.buzz_id } : {}),

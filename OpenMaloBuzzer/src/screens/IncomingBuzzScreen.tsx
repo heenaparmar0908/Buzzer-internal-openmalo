@@ -105,7 +105,8 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
         // Sound.play that occurred with react-native-sound.
         const soundFile = `${payload.sound_id || 'buzz_alarm'}.wav`;
         try {
-          await BuzzerAlarmModule?.startAlarm?.(soundFile);
+          if (!BuzzerAlarmModule?.startAlarm) throw new Error('BuzzerAlarmModule not available');
+          await BuzzerAlarmModule.startAlarm(soundFile);
         } catch {
           // Fallback to react-native-sound if native module unavailable
           Sound.setCategory('Playback');

@@ -379,21 +379,34 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
         // The buzz notification uses NOTIFICATION_ID (the same slot as the
         // service notification), so clearing it would leave the service
         // without a foreground notification — Android would kill it.
-        // NOTE: Do NOT send ACTION_STOP_ALARM here — this method is called
-        // by IncomingBuzzScreen 1.5s after mount to clear the notification
-        // from the drawer (the full-screen UI is showing). The alarm must
-        // keep playing until the user responds or the 2-min timeout fires.
+        // NEVER send ACTION_STOP_ALARM here — this method is called by
+        // IncomingBuzzScreen 1.5s after mount to clear the notification
+        // from the drawer. The alarm must keep playing until the user
+        // responds or the 2-min timeout fires.
         try {
+            val nm2 = reactApplicationContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            // Rebuild the low-priority service notification to keep the foreground service alive
+            val serviceIntent = android.content.Intent(reactApplicationContext, BuzzerService::class.java)
+            // Check if service is running by looking for a recent heartbeat
             val prefs = reactApplicationContext.getSharedPreferences(
                 BuzzerService.PREFS_NAME, android.content.Context.MODE_PRIVATE
             )
-            val activeBuzz = prefs.getString(BuzzerService.PREF_ACTIVE_BUZZ_ID, null)
-            // Only restore service notification if no active buzz (alarm still playing)
-            if (activeBuzz == null) {
-                val restoreIntent = android.content.Intent(reactApplicationContext, BuzzerService::class.java).apply {
-                    action = BuzzerService.ACTION_STOP_ALARM
-                }
-                reactApplicationContext.startService(restoreIntent)
+            val lastHeartbeat = prefs.getLong(BuzzerService.PREF_LAST_HEARTBEAT, 0)
+            if (System.currentTimeMillis() - lastHeartbeat < 30000) {
+                // Service is alive — post a minimal notification to keep it foreground
+                val channel = android.app.NotificationChannel(
+                    BuzzerService.CHANNEL_ID, "Buzzer Service",
+                    android.app.NotificationManager.IMPORTANCE_LOW
+                )
+                nm2.createNotificationChannel(channel)
+                val notif = androidx.core.app.NotificationCompat.Builder(reactApplicationContext, BuzzerService.CHANNEL_ID)
+                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setContentTitle("Buzzer")
+                    .setContentText("Listening for buzzes")
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
+                    .setSilent(true)
+                    .build()
+                nm2.notify(BuzzerService.NOTIFICATION_ID, notif)
             }
         } catch (_: Exception) {}
     }
