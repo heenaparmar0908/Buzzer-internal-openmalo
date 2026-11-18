@@ -158,6 +158,14 @@ export const updateProfile = async (
   return updated;
 };
 
+export const forgotPin = async (phone: string, newPin: string, tenantCode: string): Promise<void> => {
+  const tenant = await getTenantByCode(tenantCode);
+  if (!tenant) throw new Error('Invalid company code');
+  const user = await getUserByPhone(phone, tenant.id);
+  if (!user) throw new Error('No account found with this phone number');
+  await resetUserPin(user.id, hashPin(newPin));
+};
+
 export const changePin = async (
   user: User,
   currentPin: string,

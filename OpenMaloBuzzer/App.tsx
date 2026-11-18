@@ -1,6 +1,7 @@
 import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {StatusBar, ActivityIndicator, View, Text, StyleSheet, AppState, NativeModules, Platform, PermissionsAndroid, DeviceEventEmitter, Linking, TouchableOpacity} from 'react-native';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useAuth} from './src/hooks/useAuth';
 import {createNotificationChannel, setupNotificationListeners, cancelBuzzNotification} from './src/services/notification';
 import {respondToBuzz, subscribeToIncomingBuzzes, subscribeToUsers, requestFcmPermission, getUserName} from './src/services/firebase';
@@ -12,6 +13,8 @@ import {BuzzPayload, User, Group} from './src/types';
 
 import LoginScreen from './src/screens/LoginScreen';
 import SignupScreen from './src/screens/SignupScreen';
+import ForgotPinScreen from './src/screens/ForgotPinScreen';
+import {forgotPin} from './src/services/auth';
 import HomeScreen from './src/screens/HomeScreen';
 import BuzzSheet from './src/screens/BuzzSheet';
 import IncomingBuzzScreen from './src/screens/IncomingBuzzScreen';
@@ -36,7 +39,7 @@ type Screen = 'home' | 'buzz' | 'settings' | 'profile' | 'history' | 'groups' | 
 function App() {
   const {user, loading, login, signUp, deleteAccount, updateProfile, changePin, logout} = useAuth();
   const [screen, setScreen] = useState<Screen>('home');
-  const [authScreen, setAuthScreen] = useState<'login' | 'signup'>('login');
+  const [authScreen, setAuthScreen] = useState<'login' | 'signup' | 'forgot-pin'>('login');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [incomingPayload, setIncomingPayload] = useState<BuzzPayload | null>(null);
@@ -279,7 +282,7 @@ function App() {
           try {
             const {data: buzzRow} = await supabase.from('buzzes').select('response')
               .eq('id', data.buzz_id).single();
-            if (buzzRow && buzzRow.response !== 'none') return;
+            if (buzzRow && buzzRow.response !== 'none' && buzzRow.response !== 'auto_dismissed') return;
           } catch {}
           setIncomingPayload(prev => {
             if (prev?.buzz_id === data.buzz_id) return prev;
@@ -552,9 +555,11 @@ function App() {
         </View>
       ) : !user ? (
         authScreen === 'login' ? (
-          <LoginScreen onLogin={login} onGoToSignup={() => setAuthScreen('signup')} />
-        ) : (
+          <LoginScreen onLogin={login} onGoToSignup={() => setAuthScreen('signup')} onForgotPin={() => setAuthScreen('forgot-pin')} />
+        ) : authScreen === 'signup' ? (
           <SignupScreen onSignup={signUp} onGoToLogin={() => setAuthScreen('login')} />
+        ) : (
+          <ForgotPinScreen onResetPin={forgotPin} onBack={() => setAuthScreen('login')} />
         )
       ) : (
         <>

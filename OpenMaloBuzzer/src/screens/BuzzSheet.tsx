@@ -280,6 +280,7 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
       responded_at: null,
       response: 'none',
       escalated: false,
+      ...(sender.tenant_id ? {tenant_id: sender.tenant_id} : {}),
     };
 
     const t1 = Date.now();

@@ -21,6 +21,7 @@ const RESPONSE_CONFIG: Record<BuzzResponse, {label: string; color: string; icon:
   busy: {label: 'Busy', color: '#F44336', icon: 'cancel'},
   cancelled: {label: 'Cancelled', color: '#888', icon: 'block'},
   dismissed: {label: 'Not responded', color: '#FF9800', icon: 'warning'},
+  auto_dismissed: {label: 'No response', color: '#FF9800', icon: 'warning'},
   none: {label: 'Waiting...', color: '#555', icon: 'hourglass-empty'},
 };
 
@@ -61,7 +62,7 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
     setSending(true);
     let docs;
     try {
-      docs = await createGroupBuzz(sender.id, sender.name, memberIds, reason, note.trim() || null, group.id, group.name, selectedSound);
+      docs = await createGroupBuzz(sender.id, sender.name, memberIds, reason, note.trim() || null, group.id, group.name, selectedSound, sender.tenant_id);
     } catch (err: any) {
       setSending(false);
       Alert.alert('Buzz Failed', 'Could not send group buzz. Check your internet connection and try again.');

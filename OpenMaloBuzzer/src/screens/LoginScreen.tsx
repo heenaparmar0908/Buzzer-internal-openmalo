@@ -23,9 +23,10 @@ const BASE_WIDTH = 375;
 interface Props {
   onLogin: (phone: string, pin: string, tenantCode?: string) => Promise<User | null>;
   onGoToSignup: () => void;
+  onForgotPin: () => void;
 }
 
-const LoginScreen: React.FC<Props> = ({ onLogin, onGoToSignup }) => {
+const LoginScreen: React.FC<Props> = ({ onLogin, onGoToSignup, onForgotPin }) => {
   const [companyCode, setCompanyCode] = useState('');
   const [phone, setPhone] = useState('');
   const [pin, setPin] = useState('');
@@ -98,12 +99,8 @@ const LoginScreen: React.FC<Props> = ({ onLogin, onGoToSignup }) => {
     }
   };
 
-  const openForgotModal = () => {
-    setAlertModal({
-      visible: true,
-      title: 'Forgot PIN?',
-      message: 'Contact your manager or admin to reset your PIN from the Settings screen.',
-    });
+  const openForgotPin = () => {
+    onForgotPin();
   };
 
   const bottomPadding = keyboardVisible
@@ -215,7 +212,7 @@ const LoginScreen: React.FC<Props> = ({ onLogin, onGoToSignup }) => {
 
       <TouchableOpacity
         style={styles.forgotLink}
-        onPress={openForgotModal}
+        onPress={openForgotPin}
         activeOpacity={0.7}>
         <Text style={[styles.forgotText, { fontSize: 14 * scale }]}>
           Forgot PIN?

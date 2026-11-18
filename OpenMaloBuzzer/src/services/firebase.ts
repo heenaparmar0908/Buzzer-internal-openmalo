@@ -32,8 +32,10 @@ export const getUserName = async (userId: string): Promise<string> => {
   return 'User';
 };
 
+const USER_SAFE_COLUMNS = 'id,name,phone,role,last_seen_at,is_active,tenant_id';
+
 export const getUsers = async (tenantId?: string) => {
-  let query = supabase.from('users').select('*').eq('is_active', true);
+  let query = supabase.from('users').select(USER_SAFE_COLUMNS).eq('is_active', true);
   if (tenantId) query = query.eq('tenant_id', tenantId);
   const {data} = await query;
   return (data || []) as User[];
@@ -106,7 +108,7 @@ export const updateUserRole = async (userId: string, role: string) => {
 
 export const subscribeToUsers = (callback: (users: User[]) => void, tenantId?: string) => {
   const fetchUsers = () => {
-    let query = supabase.from('users').select('*').eq('is_active', true);
+    let query = supabase.from('users').select(USER_SAFE_COLUMNS).eq('is_active', true);
     if (tenantId) query = query.eq('tenant_id', tenantId);
     query.then(({data}) => { if (data) callback(data as User[]); });
   };
@@ -134,7 +136,7 @@ const PENDING_RESPONSES_KEY = '@buzzer_pending_responses';
 
 export const respondToBuzz = async (buzzId: string, response: BuzzResponse): Promise<boolean> => {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const {error} = await supabase.from('buzzes').update({response, responded_at: Date.now()}).eq('id', buzzId);
+    const {error} = await supabase.from('buzzes').update({response, responded_at: Date.now()}).eq('id', buzzId).in('response', ['none', 'auto_dismissed']);
     if (!error) return true;
     console.warn(`respondToBuzz attempt ${attempt + 1} failed:`, buzzId, error.message);
     if (attempt < 2) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
@@ -463,6 +465,7 @@ export const createGroupBuzz = async (
   groupId: string,
   groupName: string,
   soundId: string = 'buzz_alarm',
+  tenantId?: string,
 ) => {
   const now = Date.now();
   const rows = memberIds.map(memberId => ({
@@ -478,6 +481,7 @@ export const createGroupBuzz = async (
     escalated: false,
     group_id: groupId,
     group_name: groupName,
+    ...(tenantId ? {tenant_id: tenantId} : {}),
   }));
 
   const {data, error} = await supabase.from('buzzes').insert(rows).select();

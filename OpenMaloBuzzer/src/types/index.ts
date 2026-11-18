@@ -35,6 +35,7 @@ export interface Buzz {
   escalated: boolean;
   group_id?: string;
   group_name?: string;
+  tenant_id?: string;
 }
 
 export interface Reason {
