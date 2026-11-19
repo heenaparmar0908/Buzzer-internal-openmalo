@@ -26,9 +26,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // (Ack, 5min, Busy) via onBackgroundEvent.
     application.registerForRemoteNotifications()
 
-    // TODO: Enable CallKit/PushKit after adding BuzzerCallManager.swift to Xcode project
-    // and linking CallKit + PushKit frameworks + adding "voip" UIBackgroundMode.
-    // BuzzerCallManager.shared.registerForVoIPPushes()
+    // CallKit + PushKit: WhatsApp-style incoming call screen.
+    // Shows full-screen call UI even on silent/locked devices.
+    BuzzerCallManager.shared.registerForVoIPPushes()
 
     // Register BGTaskScheduler for periodic token refresh.
     // This replaces the deprecated setMinimumBackgroundFetchInterval API.

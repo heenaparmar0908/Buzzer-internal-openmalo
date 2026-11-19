@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import CallKit
 import PushKit
 import UIKit
@@ -37,7 +38,6 @@ class BuzzerCallManager: NSObject {
 
   private override init() {
     let config = CXProviderConfiguration()
-    config.localizedName = "Buzzer"
     config.supportsVideo = false
     config.maximumCallsPerCallGroup = 1
     config.maximumCallGroups = 1
@@ -66,6 +66,9 @@ class BuzzerCallManager: NSObject {
   // MARK: - Report Incoming Buzz
 
   /// Called when a VoIP push arrives or when we want to show the system call UI.
+  /// Track last reported buzz to prevent double CallKit screen
+  private var lastReportedBuzzId: String?
+
   func reportIncomingBuzz(
     buzzId: String,
     fromUserName: String,
@@ -75,6 +78,14 @@ class BuzzerCallManager: NSObject {
     soundId: String = "buzz_alarm",
     completion: ((Error?) -> Void)? = nil
   ) {
+    // Dedup: skip if same buzz already reported
+    if buzzId == lastReportedBuzzId && activeCallUUID != nil {
+      print("[CallKit] Buzz \(buzzId) already reported — skipping duplicate")
+      completion?(nil)
+      return
+    }
+    lastReportedBuzzId = buzzId
+
     let uuid = UUID()
     activeCallUUID = uuid
     activeBuzzData = [
@@ -138,12 +149,32 @@ extension BuzzerCallManager: CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-    print("[CallKit] Call answered — opening IncomingBuzzScreen")
+    print("[CallKit] Call answered — opening IncomingBuzzScreen for user to choose response")
 
-    // Open the app to IncomingBuzzScreen
     let buzzData = activeBuzzData
+
+    // Store buzz data in UserDefaults so the app can pick it up
+    // even if the React Native bridge isn't ready yet (killed state).
+    // This is the same approach used for notification tap recovery.
+    if let buzzId = buzzData["buzz_id"], !buzzId.isEmpty {
+      let tapData: [String: Any] = [
+        "buzz_id": buzzData["buzz_id"] ?? "",
+        "from_user_id": buzzData["from_user_id"] ?? "",
+        "from_user_name": buzzData["from_user_name"] ?? "User",
+        "reason": buzzData["reason"] ?? "",
+        "note": buzzData["note"] ?? "",
+        "sound_id": buzzData["sound_id"] ?? "buzz_alarm",
+        "created_at": Int64(Date().timeIntervalSince1970 * 1000),
+      ]
+      if let jsonData = try? JSONSerialization.data(withJSONObject: tapData),
+         let jsonString = String(data: jsonData, encoding: .utf8) {
+        UserDefaults.standard.set(jsonString, forKey: "@buzzer_pending_tap")
+        print("[CallKit] Stored buzz data in @buzzer_pending_tap for app recovery")
+      }
+    }
+
+    // Post notification for foreground/background case (JS bridge already running)
     DispatchQueue.main.async {
-      // Post a notification that the React Native bridge can observe
       NotificationCenter.default.post(
         name: NSNotification.Name("BuzzerCallAnswered"),
         object: nil,
@@ -151,9 +182,14 @@ extension BuzzerCallManager: CXProviderDelegate {
       )
     }
 
+    // Open the app (brings to foreground or launches if killed)
+    DispatchQueue.main.async {
+      UIApplication.shared.open(URL(string: "openmalobuzzer://buzz")!, options: [:], completionHandler: nil)
+    }
+
     action.fulfill()
 
-    // End the CallKit call after a brief delay (the alarm continues via BuzzerAlarmModule)
+    // End the CallKit call after a brief delay
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
       self?.endCall(reason: .answeredElsewhere)
     }
@@ -186,9 +222,12 @@ extension BuzzerCallManager: CXProviderDelegate {
   private func respondToBuzz(buzzId: String, response: String) {
     guard let supabaseUrl = Bundle.main.object(forInfoDictionaryKey: "SUPABASE_URL") as? String,
           let supabaseKey = Bundle.main.object(forInfoDictionaryKey: "SUPABASE_ANON_KEY") as? String,
-          let url = URL(string: "\(supabaseUrl)/rest/v1/buzzes?id=eq.\(buzzId)&response=eq.none") else {
+          let url = URL(string: "\(supabaseUrl)/rest/v1/buzzes?id=eq.\(buzzId)") else {
+      print("[CallKit] respondToBuzz: missing Supabase config")
       return
     }
+
+    print("[CallKit] respondToBuzz: writing \(response) for buzz \(buzzId)")
 
     var request = URLRequest(url: url)
     request.httpMethod = "PATCH"
@@ -203,7 +242,13 @@ extension BuzzerCallManager: CXProviderDelegate {
       "responded_at": Int64(Date().timeIntervalSince1970 * 1000),
     ]
     request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-    URLSession.shared.dataTask(with: request).resume()
+    URLSession.shared.dataTask(with: request) { _, resp, error in
+      if let error = error {
+        print("[CallKit] respondToBuzz FAILED: \(error.localizedDescription)")
+      } else if let httpResp = resp as? HTTPURLResponse {
+        print("[CallKit] respondToBuzz HTTP \(httpResp.statusCode)")
+      }
+    }.resume()
   }
 }
 

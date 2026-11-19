@@ -39,19 +39,34 @@ async function getApnsToken(): Promise<string> {
   const claims = base64url(JSON.stringify({ iss: APNS_TEAM_ID, iat: now }));
   const signInput = new TextEncoder().encode(`${header}.${claims}`);
 
-  // Import the .p8 private key (PKCS#8 PEM format, EC P-256)
-  const pemBody = APNS_PRIVATE_KEY
-    .replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g, "")
-    .replace(/\s/g, "");
-  const keyData = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
+  // Import the .p8 private key (PKCS#8 PEM format, EC P-256).
+  // Supabase secrets may strip newlines or add spaces, so clean thoroughly.
+  let pemBody = APNS_PRIVATE_KEY;
+  // Remove PEM headers/footers
+  pemBody = pemBody.replace(/-----BEGIN PRIVATE KEY-----/g, "");
+  pemBody = pemBody.replace(/-----END PRIVATE KEY-----/g, "");
+  // Remove ALL whitespace (newlines, spaces, tabs)
+  pemBody = pemBody.replace(/[\s\r\n]+/g, "");
 
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    keyData,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign"]
-  );
+  let keyData: Uint8Array;
+  try {
+    keyData = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
+  } catch (e) {
+    throw new Error(`Failed to decode APNs key base64: ${e}. Key length=${pemBody.length}`);
+  }
+
+  let key: CryptoKey;
+  try {
+    key = await crypto.subtle.importKey(
+      "pkcs8",
+      keyData,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign"]
+    );
+  } catch (e) {
+    throw new Error(`Failed to import APNs key: ${e}. keyData length=${keyData.length} bytes`);
+  }
 
   const sigBuffer = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
@@ -151,8 +166,12 @@ Deno.serve(async (req) => {
     if (voip_token && platform === "ios" && isBuzz && APNS_KEY_ID) {
       try {
         const apnsJwt = await getApnsToken();
-        const voipRes = await fetch(
-          `https://api.push.apple.com/3/device/${voip_token}`,
+        // Use sandbox for development builds, production for release.
+        // Try production first; if BadDeviceToken, retry on sandbox.
+        const apnsHost = "api.push.apple.com";
+        const apnsSandbox = "api.sandbox.push.apple.com";
+        let voipRes = await fetch(
+          `https://${apnsHost}/3/device/${voip_token}`,
           {
             method: "POST",
             headers: {
@@ -172,12 +191,40 @@ Deno.serve(async (req) => {
             }),
           }
         );
+        // If production returns BadDeviceToken, retry on sandbox (debug builds)
+        if (!voipRes.ok) {
+          const voipBody = await voipRes.text();
+          if (voipBody.includes("BadDeviceToken")) {
+            console.log("Production APNs returned BadDeviceToken — retrying on sandbox");
+            voipRes = await fetch(
+              `https://${apnsSandbox}/3/device/${voip_token}`,
+              {
+                method: "POST",
+                headers: {
+                  "apns-topic": `${APNS_BUNDLE_ID}.voip`,
+                  "apns-push-type": "voip",
+                  "apns-priority": "10",
+                  "apns-expiration": "0",
+                  "authorization": `bearer ${apnsJwt}`,
+                },
+                body: JSON.stringify({
+                  buzz_id: data.buzz_id,
+                  from_user_id: data.from_user_id || "",
+                  from_user_name: data.from_user_name || "User",
+                  reason: data.reason || "Incoming buzz",
+                  note: data.note || "",
+                  sound_id: data.sound_id || "buzz_alarm",
+                }),
+              }
+            );
+          }
+        }
         if (voipRes.ok) {
           console.log("VoIP push sent — skipping FCM to prevent double notification");
           voipSent = true;
         } else {
-          const voipBody = await voipRes.text();
-          console.error(`VoIP push failed: HTTP ${voipRes.status} — ${voipBody} — falling through to FCM`);
+          const voipBody2 = await voipRes.text();
+          console.error(`VoIP push failed: HTTP ${voipRes.status} — ${voipBody2} — falling through to FCM`);
         }
       } catch (voipErr) {
         console.error("VoIP push error — falling through to FCM:", voipErr);
