@@ -4,7 +4,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Sound from 'react-native-sound';
 import {BuzzPayload, BuzzResponse, Buzz} from '../types';
-import {respondToBuzz, subscribeToBuzz} from '../services/firebase';
+import {respondToBuzz, subscribeToBuzz, markBuzzDelivered} from '../services/firebase';
 import {supabase} from '../services/supabase';
 import {cancelBuzzNotification} from '../services/notification';
 import {NO_RESPONSE_TIMEOUT_MS, STALE_BUZZ_THRESHOLD_MS} from '../constants';
@@ -154,6 +154,10 @@ const IncomingBuzzScreen: React.FC<Props> = ({payload, onDismiss}) => {
     return () => { unsub(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payload.buzz_id, onDismiss]);
+
+  // Mark buzz as delivered (receiver is now looking at IncomingBuzzScreen).
+  // Idempotent — only writes if delivered_at is still null.
+  useEffect(() => { markBuzzDelivered(payload.buzz_id); }, [payload.buzz_id]);
 
   // Android: Trigger native alarm immediately when this screen mounts.
   // FIX: Check if buzz was already cancelled before starting alarm.

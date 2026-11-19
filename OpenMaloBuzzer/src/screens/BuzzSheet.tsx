@@ -231,22 +231,7 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
   }, [allResponded, showUserPicker]);
 
   const checkInactiveAndSend = (targetUser: User, reason: string, buzzNote: string | null) => {
-    const offlineMs = Date.now() - (targetUser.last_seen_at || 0);
-    const INACTIVE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
-    if (offlineMs > INACTIVE_THRESHOLD_MS) {
-      const days = Math.floor(offlineMs / (24 * 60 * 60 * 1000));
-      const label = days >= 1 ? `${days} day${days > 1 ? 's' : ''}` : 'over 24 hours';
-      Alert.alert(
-        'User Inactive',
-        `${targetUser.name} has been offline for ${label}. The buzz may not be delivered. Send anyway?`,
-        [
-          {text: 'Cancel', style: 'cancel'},
-          {text: 'Send Anyway', onPress: () => sendBuzzToUser(targetUser, reason, buzzNote)},
-        ],
-      );
-    } else {
-      sendBuzzToUser(targetUser, reason, buzzNote);
-    }
+    sendBuzzToUser(targetUser, reason, buzzNote);
   };
 
   const sendBuzzToUser = async (targetUser: User, reason: string, buzzNote: string | null) => {
@@ -296,17 +281,12 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
     setSending(false);
     console.log(`[T2] Buzz created: ${doc.id} at ${Date.now()} (+${Date.now() - t1}ms)`);
 
-    // Send FCM push via Supabase Edge Function (for killed/background state)
+    // Send FCM push via Supabase Edge Function (for killed/background state).
+    // Push failures are logged but no alert is shown to the sender —
+    // the buzz is always stored in Supabase and recovered by checkPending.
     sendBuzzPush(targetUser.id, doc.id, sender.id, sender.name, reason, buzzNote, selectedSound)
       .then(pushResult => {
         console.log(`[T4] FCM push result for ${doc.id}: ${pushResult} at ${Date.now()} (+${Date.now() - t1}ms)`);
-        if (pushResult === 'no_token') {
-          Alert.alert('Push Not Delivered', `${targetUser.name} has no push token registered. They will only see the buzz when they open the app.`);
-        } else if (pushResult === 'token_invalid') {
-          Alert.alert('Push Not Delivered', `${targetUser.name}'s push token is invalid. They will only see the buzz when they open the app.`);
-        } else if (pushResult === 'failed') {
-          Alert.alert('Push May Be Delayed', 'The notification could not be sent. The receiver will see the buzz when they open the app or via background polling.');
-        }
       })
       .catch(() => {});
 

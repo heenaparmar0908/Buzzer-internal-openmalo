@@ -60,6 +60,20 @@ class BuzzerServiceModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun showBuzz(buzzId: String, fromUserId: String, fromUserName: String, reason: String, note: String?, soundId: String?, promise: Promise) {
         try {
+            // Try ConnectionService first (WhatsApp-style system call priority).
+            // Falls back to direct BuzzerService if ConnectionService fails
+            // (older devices, permission issues, or already in a call).
+            val usedConnection = BuzzerConnectionService.showIncomingBuzz(
+                reactApplicationContext,
+                buzzId, fromUserId, fromUserName, reason, note, soundId
+            )
+            if (usedConnection) {
+                // ConnectionService will start BuzzerService internally
+                promise.resolve(true)
+                return
+            }
+
+            // Fallback: direct BuzzerService (pre-O devices or ConnectionService failure)
             val intent = Intent(reactApplicationContext, BuzzerService::class.java).apply {
                 action = BuzzerService.ACTION_SHOW_BUZZ
                 putExtra(BuzzerService.EXTRA_BUZZ_ID, buzzId)

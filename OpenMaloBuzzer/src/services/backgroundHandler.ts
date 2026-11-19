@@ -131,18 +131,24 @@ export const setupBackgroundHandler = () => {
           await new Promise<void>(r => setTimeout(r, 300));
           started = await tryShowBuzz();
         }
-        if (started) return; // Service handled it with full alarm
+        if (started) return; // Service handled it — native markNotifiedAt() runs there
 
         // Service couldn't start (OS blocked it) — show notifee notification with sound.
+        // Mark notified_at from JS since native service couldn't do it.
+        try {
+          const {markBuzzNotified} = require('./firebase');
+          await markBuzzNotified(data.buzz_id);
+        } catch {}
         const senderName = data.from_user_name || 'User';
         const buzzSoundName = data.sound_id || 'buzz_alarm';
 
-        const FALLBACK_CHANNEL_ID = `buzzer_fallback_${buzzSoundName}`;
+        // Silent fallback channel — no sound here because BuzzerService
+        // already handles the alarm. Playing sound on both would cause double audio.
+        const FALLBACK_CHANNEL_ID = 'buzzer_fallback_silent';
         await notifee.createChannel({
           id: FALLBACK_CHANNEL_ID,
-          name: `Buzzer Alerts (${buzzSoundName.replace('buzz_alarm', 'Sound').replace('_', ' ')})`,
+          name: 'Buzzer Alerts (Fallback)',
           importance: AndroidImportance.HIGH,
-          sound: buzzSoundName,
           vibration: true,
           vibrationPattern: [0, 500, 200, 500, 200, 500],
         });
@@ -154,7 +160,6 @@ export const setupBackgroundHandler = () => {
           android: {
             channelId: FALLBACK_CHANNEL_ID,
             importance: AndroidImportance.HIGH,
-            sound: buzzSoundName,
             fullScreenAction: {
               id: 'incoming-buzz',
               launchActivity: 'default',

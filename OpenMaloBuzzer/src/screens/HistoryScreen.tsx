@@ -22,7 +22,8 @@ const RESPONSE_MAP: Record<string, {label: string; color: string; icon: string}>
   busy: {label: 'Busy', color: '#F44336', icon: 'cancel'},
   cancelled: {label: 'Cancelled', color: '#888', icon: 'block'},
   dismissed: {label: 'Dismissed', color: '#9C27B0', icon: 'visibility'},
-  none: {label: 'No response', color: '#555', icon: '—'},
+  auto_dismissed: {label: 'Missed (timed out)', color: '#FF5722', icon: 'alarm-off'},
+  none: {label: 'No response', color: '#555', icon: 'hourglass-empty'},
 };
 
 const groupBuzzes = (buzzes: Buzz[], groupsMap: Record<string, string>): DisplayItem[] => {
@@ -83,7 +84,7 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack, onViewUserProfile}
     const incoming = buzzes.filter(b => b.to_user_id === currentUser.id);
     return {
       all: buzzes.length,
-      missed: incoming.filter(b => b.response === 'none').length,
+      missed: incoming.filter(b => b.response === 'none' || b.response === 'auto_dismissed').length,
       ack: buzzes.filter(b => b.response === 'ack').length,
       five_min: buzzes.filter(b => b.response === 'five_min').length,
       busy: buzzes.filter(b => b.response === 'busy').length,
@@ -363,7 +364,7 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack, onViewUserProfile}
         </View>
       ) : (
         <FlatList
-          data={groupBuzzes(filter === 'all' ? buzzes : filter === 'missed' ? buzzes.filter(b => b.to_user_id === currentUser.id && b.response === 'none') : filter === 'escalated' ? buzzes.filter(b => b.escalated) : buzzes.filter(b => b.response === filter), groupsMap)}
+          data={groupBuzzes(filter === 'all' ? buzzes : filter === 'missed' ? buzzes.filter(b => b.to_user_id === currentUser.id && (b.response === 'none' || b.response === 'auto_dismissed')) : filter === 'escalated' ? buzzes.filter(b => b.escalated) : buzzes.filter(b => b.response === filter), groupsMap)}
           renderItem={renderItem}
           keyExtractor={item => item.id}
           contentContainerStyle={[styles.list, {paddingBottom: insets.bottom + 24}]}

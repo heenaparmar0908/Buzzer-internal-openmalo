@@ -133,7 +133,7 @@ class BuzzerService : Service() {
             val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val json = prefs.getString("seen_buzz_ids", "{}") ?: "{}"
             val map = JSONObject(json)
-            val cutoff = System.currentTimeMillis() - 300000 // 5 minutes
+            val cutoff = System.currentTimeMillis() - 1800000 // 30 minutes
             val keysToRemove = mutableListOf<String>()
             val keys = map.keys()
             while (keys.hasNext()) {
@@ -296,6 +296,7 @@ class BuzzerService : Service() {
                 activeSoundId = soundId
                 saveActiveBuzz(buzzId, fromUserId, reason, note)
                 showBuzzNotification(buzzId, fromUserId, reason, note)
+                markNotifiedAt(buzzId)
                 Log.d(TAG, "[T9] Notification posted: $buzzId at ${System.currentTimeMillis()} (+${System.currentTimeMillis() - t7}ms)")
                 startAlarm()
                 Log.d(TAG, "[T8] Alarm started: $buzzId at ${System.currentTimeMillis()} (+${System.currentTimeMillis() - t7}ms)")
@@ -323,6 +324,10 @@ class BuzzerService : Service() {
         if (action == ACTION_START) {
             saveUserId(userId)
             restartAttempt = 0
+            // Re-enqueue TokenRefreshWorker on every service start.
+            // Android hibernation (30+ days) cancels all WorkManager jobs.
+            // This ensures the periodic worker is always alive when the service is.
+            TokenRefreshWorker.ensureScheduled(this)
         }
 
         // Re-acquire WakeLock on every start to ensure polling stays alive
@@ -553,6 +558,13 @@ class BuzzerService : Service() {
         supabasePatch("buzzes?id=eq.$buzzId&response=eq.none", body)
     }
 
+    /** Record when the receiver's device first showed the buzz notification.
+     *  Only writes if notified_at is still null (idempotent). */
+    private fun markNotifiedAt(buzzId: String) {
+        val body = JSONObject().apply { put("notified_at", System.currentTimeMillis()) }
+        supabasePatch("buzzes?id=eq.$buzzId&notified_at=is.null", body)
+    }
+
     private fun pollForBuzzes(userId: String, maxAgeMs: Long = 120000L) {
         Thread {
             try {
@@ -585,6 +597,7 @@ class BuzzerService : Service() {
                                 reason = pollReason,
                                 note = pollNote
                             )
+                            markNotifiedAt(buzzId)
                             startAlarm()
                             // Auto-stop alarm after 2 minutes and mark as dismissed
                             handler.postDelayed({

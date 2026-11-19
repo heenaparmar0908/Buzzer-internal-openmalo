@@ -5,6 +5,9 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.tasks.await
@@ -15,6 +18,7 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 class TokenRefreshWorker(
     context: Context,
@@ -24,6 +28,29 @@ class TokenRefreshWorker(
     companion object {
         const val TAG = "TokenRefreshWorker"
         const val WORK_NAME = "token_refresh_work"
+
+        /**
+         * Ensure the periodic worker is enqueued. Safe to call multiple times —
+         * UPDATE policy replaces the existing schedule without duplicating.
+         *
+         * Called from: MainApplication.onCreate, BuzzerService.onStartCommand,
+         * BootReceiver. This guarantees the worker survives Android hibernation
+         * which cancels all WorkManager jobs for the app.
+         */
+        fun ensureScheduled(context: Context) {
+            try {
+                val workRequest = PeriodicWorkRequestBuilder<TokenRefreshWorker>(
+                    15, TimeUnit.MINUTES
+                ).build()
+                WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                    WORK_NAME,
+                    ExistingPeriodicWorkPolicy.UPDATE,
+                    workRequest
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "ensureScheduled failed: ${e.message}")
+            }
+        }
     }
 
     override suspend fun doWork(): Result {
@@ -121,8 +148,14 @@ class TokenRefreshWorker(
     private fun pollForPendingBuzzes(userId: String) {
         var conn: HttpURLConnection? = null
         try {
-            val since = System.currentTimeMillis() - 600000 // last 10 minutes (catches buzzes missed during airplane mode / network outage)
-            val url = URL("${SupabaseConfig.URL}/rest/v1/buzzes?to_user_id=eq.$userId&response=eq.none&created_at=gte.$since&select=id,from_user_id,from_user_name,reason,note,sound_id")
+            // 30-minute window (was 10 min). When the app is in Android's "rare"
+            // standby bucket (7+ days inactive), WorkManager may only run every
+            // ~12 hours. A 10-min window would miss buzzes sent between runs.
+            // 30 min gives a reasonable catch-up window even under heavy throttling.
+            val since = System.currentTimeMillis() - 1800000
+            // Include auto_dismissed: the native service may have timed out a buzz
+            // while the process was being killed. The receiver never saw it.
+            val url = URL("${SupabaseConfig.URL}/rest/v1/buzzes?to_user_id=eq.$userId&response=in.(none,auto_dismissed)&created_at=gte.$since&select=id,from_user_id,from_user_name,reason,note,sound_id&order=created_at.desc&limit=1")
             conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("apikey", SupabaseConfig.ANON_KEY)

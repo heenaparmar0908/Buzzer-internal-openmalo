@@ -4,7 +4,7 @@ import {SafeAreaProvider} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useAuth} from './src/hooks/useAuth';
 import {createNotificationChannel, setupNotificationListeners, cancelBuzzNotification} from './src/services/notification';
-import {respondToBuzz, subscribeToIncomingBuzzes, subscribeToUsers, requestFcmPermission, getUserName} from './src/services/firebase';
+import {respondToBuzz, subscribeToIncomingBuzzes, subscribeToUsers, requestFcmPermission, getUserName, markBuzzNotified} from './src/services/firebase';
 import {MISSED_BUZZ_WINDOW_MS} from './src/constants';
 import {promptBatteryOptimization, promptDndAccess, recheckBatteryOptimization, checkNotificationPermission} from './src/services/batteryOptimization';
 import {getSelectedSound} from './src/services/soundPreference';
@@ -53,6 +53,10 @@ function App() {
   const usersMapRef = useRef<Record<string, string>>({});
   const userRef = useRef(user);
   userRef.current = user;
+  // Queue of missed buzzes found by checkPending. When the user dismisses
+  // the current buzz, the next one in the queue is shown immediately
+  // instead of waiting for the next AppState 'active' event.
+  const pendingBuzzQueueRef = useRef<BuzzPayload[]>([]);
 
   useEffect(() => {
     const requestPermissions = async () => {
@@ -468,25 +472,32 @@ function App() {
             .eq('to_user_id', userRef.current?.id || '').in('response', ['none', 'auto_dismissed'])
             .order('created_at', {ascending: false});
           if (missed && missed.length > 0) {
-            // Show the newest buzz first. Remaining buzzes will be picked
-            // up on subsequent checkPending calls (each app resume) after
-            // the user dismisses the current one.
-            const buzz = missed[0] as any;
-            const ts = toEpochMs(buzz.created_at);
-            if (buzz.id) {
-              console.log(`[Buzz-CheckPending] Safety-net query found buzz ${buzz.id} (age=${ts ? Math.round((Date.now() - ts) / 1000) : '?'}s)`);
+            console.log(`[Buzz-CheckPending] Safety-net found ${missed.length} pending buzz(es)`);
+            // Convert all missed buzzes to BuzzPayload and queue them.
+            // Show the newest first; remaining are shown as user dismisses each.
+            const payloads: BuzzPayload[] = missed.map((buzz: any) => {
+              const ts = toEpochMs(buzz.created_at);
               const name = buzz.from_user_name || usersMapRef.current[buzz.from_user_id] || 'User';
+              return {
+                buzz_id: buzz.id,
+                from_user_id: buzz.from_user_id,
+                from_user_name: name,
+                reason: buzz.reason,
+                note: buzz.note,
+                sound_id: buzz.sound_id || null,
+                created_at: ts || Date.now(),
+              };
+            }).filter((p: BuzzPayload) => !!p.buzz_id);
+            if (payloads.length > 0) {
+              const first = payloads[0];
+              // Queue remaining buzzes (skip first, it's shown immediately)
+              pendingBuzzQueueRef.current = payloads.slice(1);
+              // Mark notified_at for all recovered buzzes (idempotent)
+              payloads.forEach(p => markBuzzNotified(p.buzz_id));
+              console.log(`[Buzz-CheckPending] Showing buzz ${first.buzz_id}, ${pendingBuzzQueueRef.current.length} queued`);
               setIncomingPayload(prev => {
-                if (prev?.buzz_id === buzz.id) return prev;
-                return {
-                  buzz_id: buzz.id,
-                  from_user_id: buzz.from_user_id,
-                  from_user_name: name,
-                  reason: buzz.reason,
-                  note: buzz.note,
-                  sound_id: buzz.sound_id || null,
-                  created_at: ts || Date.now(),
-                };
+                if (prev?.buzz_id === first.buzz_id) return prev;
+                return first;
               });
               setPendingChecked(true);
               return;
@@ -538,7 +549,17 @@ function App() {
   const handleBuzzAgain = useCallback((u: User, reason: string, soundId?: string) => { setAutoSend(true); setInitialReason(reason); setInitialSound(soundId); setSelectedUser(u); setScreen('buzz'); }, []);
   const handleEditBuzz = useCallback((u: User, reason: string) => { setAutoSend(false); setInitialReason(reason); setInitialSound(undefined); setSelectedUser(u); setScreen('buzz'); }, []);
   const handleCloseBuzz = useCallback(() => { setSelectedUser(null); setInitialReason(undefined); setInitialSound(undefined); setAutoSend(false); setScreen('home'); }, []);
-  const handleDismissIncoming = useCallback(() => { setIncomingPayload(null); }, []);
+  const handleDismissIncoming = useCallback(() => {
+    // If there are queued missed buzzes, show the next one immediately
+    // instead of clearing the screen and waiting for the next app resume.
+    const next = pendingBuzzQueueRef.current.shift();
+    if (next) {
+      console.log(`[Buzz-Queue] Showing next queued buzz ${next.buzz_id} (${pendingBuzzQueueRef.current.length} remaining)`);
+      setIncomingPayload(next);
+    } else {
+      setIncomingPayload(null);
+    }
+  }, []);
   const handleCallUser = useCallback((u: User) => {
     Linking.openURL(`tel:${u.phone}`).catch(() => {});
   }, []);

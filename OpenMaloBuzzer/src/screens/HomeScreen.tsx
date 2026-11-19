@@ -36,8 +36,8 @@ const formatLastSeen = (lastSeenAt: number): string => {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
-  if (days === 1) return '1 day offline';
-  return `${days} days offline`;
+  if (days === 1) return '1 day ago';
+  return `${days} days ago`;
 };
 
 const getLogViewedKey = (userId: string) => `@buzzer_log_viewed_${userId}`;

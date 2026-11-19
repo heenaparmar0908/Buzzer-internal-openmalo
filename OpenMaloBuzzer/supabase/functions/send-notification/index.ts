@@ -2,12 +2,67 @@ const FIREBASE_PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID")!;
 const FIREBASE_CLIENT_EMAIL = Deno.env.get("FIREBASE_CLIENT_EMAIL")!;
 const FIREBASE_PRIVATE_KEY = Deno.env.get("FIREBASE_PRIVATE_KEY")!.replace(/\\n/g, "\n");
 
+// APNs auth for VoIP pushes (PushKit/CallKit).
+// These come from your Apple Developer account → Keys → APNs Auth Key (.p8).
+// Set them as Supabase Edge Function secrets:
+//   supabase secrets set APNS_KEY_ID=ABC123DEFG
+//   supabase secrets set APNS_TEAM_ID=TEAM123456
+//   supabase secrets set APNS_PRIVATE_KEY="$(cat AuthKey_ABC123DEFG.p8)"
+//   supabase secrets set APNS_BUNDLE_ID=com.openmalobuzzer
+const APNS_KEY_ID = Deno.env.get("APNS_KEY_ID") || "";
+const APNS_TEAM_ID = Deno.env.get("APNS_TEAM_ID") || "";
+const APNS_PRIVATE_KEY = (Deno.env.get("APNS_PRIVATE_KEY") || "").replace(/\\n/g, "\n");
+const APNS_BUNDLE_ID = Deno.env.get("APNS_BUNDLE_ID") || "com.openmalobuzzer";
+
 function base64url(data: Uint8Array | string): string {
   const str =
     typeof data === "string"
       ? btoa(data)
       : btoa(String.fromCharCode(...data));
   return str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Generate an APNs JWT for VoIP push authentication.
+ * Apple requires ES256 (ECDSA with P-256 curve) — different from Google's RS256.
+ * The token is valid for up to 1 hour per Apple's docs.
+ *
+ * Required secrets: APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY (the .p8 file content)
+ */
+async function getApnsToken(): Promise<string> {
+  if (!APNS_KEY_ID || !APNS_TEAM_ID || !APNS_PRIVATE_KEY) {
+    throw new Error("APNs secrets not configured (APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY)");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64url(JSON.stringify({ alg: "ES256", kid: APNS_KEY_ID, typ: "JWT" }));
+  const claims = base64url(JSON.stringify({ iss: APNS_TEAM_ID, iat: now }));
+  const signInput = new TextEncoder().encode(`${header}.${claims}`);
+
+  // Import the .p8 private key (PKCS#8 PEM format, EC P-256)
+  const pemBody = APNS_PRIVATE_KEY
+    .replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g, "")
+    .replace(/\s/g, "");
+  const keyData = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
+
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    keyData,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+
+  const sigBuffer = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    signInput
+  );
+
+  // WebCrypto returns ECDSA signatures in IEEE P1363 format (r||s, 64 bytes for P-256).
+  // APNs (which uses JWS/JWT) expects this same format in base64url — no DER conversion needed.
+  const signature = base64url(new Uint8Array(sigBuffer));
+  return `${header}.${claims}.${signature}`;
 }
 
 async function getAccessToken(): Promise<string> {
@@ -76,10 +131,71 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { fcm_token, data, platform } = await req.json();
-    if (!fcm_token) {
-      return new Response(JSON.stringify({ error: "Missing fcm_token" }), {
+    const { fcm_token, voip_token, data, platform } = await req.json();
+    if (!fcm_token && !voip_token) {
+      return new Response(JSON.stringify({ error: "Missing fcm_token or voip_token" }), {
         status: 400,
+      });
+    }
+
+    // iOS VoIP push via APNs (CallKit — WhatsApp-style guaranteed delivery).
+    // VoIP pushes are sent DIRECTLY to APNs using Apple's ES256 JWT auth,
+    // not through FCM, because FCM doesn't support PushKit tokens.
+    // If voip_token is provided for iOS buzz, send VoIP push first,
+    // then fall through to FCM as backup notification.
+    // iOS VoIP push via APNs (CallKit — WhatsApp-style guaranteed delivery).
+    // If VoIP push succeeds, SKIP FCM to prevent double notification/sound.
+    // Only fall through to FCM if VoIP fails.
+    const isBuzz = data?.type === "buzz";
+    let voipSent = false;
+    if (voip_token && platform === "ios" && isBuzz && APNS_KEY_ID) {
+      try {
+        const apnsJwt = await getApnsToken();
+        const voipRes = await fetch(
+          `https://api.push.apple.com/3/device/${voip_token}`,
+          {
+            method: "POST",
+            headers: {
+              "apns-topic": `${APNS_BUNDLE_ID}.voip`,
+              "apns-push-type": "voip",
+              "apns-priority": "10",
+              "apns-expiration": "0",
+              "authorization": `bearer ${apnsJwt}`,
+            },
+            body: JSON.stringify({
+              buzz_id: data.buzz_id,
+              from_user_id: data.from_user_id || "",
+              from_user_name: data.from_user_name || "User",
+              reason: data.reason || "Incoming buzz",
+              note: data.note || "",
+              sound_id: data.sound_id || "buzz_alarm",
+            }),
+          }
+        );
+        if (voipRes.ok) {
+          console.log("VoIP push sent — skipping FCM to prevent double notification");
+          voipSent = true;
+        } else {
+          const voipBody = await voipRes.text();
+          console.error(`VoIP push failed: HTTP ${voipRes.status} — ${voipBody} — falling through to FCM`);
+        }
+      } catch (voipErr) {
+        console.error("VoIP push error — falling through to FCM:", voipErr);
+      }
+    }
+
+    // If VoIP succeeded, return early — no FCM needed (prevents double sound)
+    if (voipSent) {
+      return new Response(JSON.stringify({ success: true, voip: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!fcm_token) {
+      return new Response(JSON.stringify({ success: true, voip_only: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
       });
     }
 
@@ -181,26 +297,37 @@ Deno.serve(async (req) => {
       },
     };
 
-    const fcmRes = await fetch(
-      `https://fcm.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/messages:send`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message }),
-      }
-    );
+    const fcmUrl = `https://fcm.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/messages:send`;
+    const fcmBody = JSON.stringify({ message });
+    const fcmHeaders = {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    };
 
-    const result = await fcmRes.json();
+    // Helper to extract FCM-specific error code from v1 response
+    const getFcmErrorCode = (body: any): string | undefined =>
+      body?.error?.details?.find(
+        (d: any) => d["@type"] === "type.googleapis.com/google.firebase.fcm.v1.FcmError"
+      )?.errorCode;
+
+    let fcmRes = await fetch(fcmUrl, { method: "POST", headers: fcmHeaders, body: fcmBody });
+    let result = await fcmRes.json();
+
+    // Retry ONCE on transient server errors (429, 500, 503).
+    // FCM notification messages are idempotent — Google deduplicates by message content.
+    // Permanent errors (UNREGISTERED, INVALID_ARGUMENT, 400, 401) are NOT retried.
+    if (!fcmRes.ok && fcmRes.status >= 429 && !getFcmErrorCode(result)) {
+      // Wait 1-2s before retry (respect Retry-After if present)
+      const retryAfter = parseInt(fcmRes.headers.get("Retry-After") || "2", 10);
+      await new Promise(r => setTimeout(r, Math.min(retryAfter, 5) * 1000));
+      fcmRes = await fetch(fcmUrl, { method: "POST", headers: fcmHeaders, body: fcmBody });
+      result = await fcmRes.json();
+    }
 
     // Detect stale/expired FCM tokens from FCM v1 error format and return
     // a structured error the client can easily match.
     if (!fcmRes.ok) {
-      const fcmErrorCode = result?.error?.details?.find(
-        (d: any) => d["@type"] === "type.googleapis.com/google.firebase.fcm.v1.FcmError"
-      )?.errorCode;
+      const fcmErrorCode = getFcmErrorCode(result);
       if (fcmErrorCode === "UNREGISTERED" || fcmErrorCode === "INVALID_ARGUMENT") {
         return new Response(JSON.stringify({
           error: {

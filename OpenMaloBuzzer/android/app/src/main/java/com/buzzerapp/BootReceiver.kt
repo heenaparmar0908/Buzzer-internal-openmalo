@@ -20,6 +20,10 @@ class BootReceiver : BroadcastReceiver() {
             val prefs = context.getSharedPreferences(BuzzerService.PREFS_NAME, Context.MODE_PRIVATE)
             val userId = prefs.getString(BuzzerService.PREF_USER_ID, null)
 
+            // Always re-enqueue the periodic worker on boot — covers the case
+            // where Android hibernation cancelled WorkManager jobs.
+            TokenRefreshWorker.ensureScheduled(context)
+
             if (userId != null) {
                 try {
                     val serviceIntent = Intent(context, BuzzerService::class.java).apply {

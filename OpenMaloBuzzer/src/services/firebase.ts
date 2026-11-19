@@ -63,6 +63,22 @@ export const updateLastSeen = async (userId: string) => {
   await supabase.from('users').update({last_seen_at: Date.now()}).eq('id', userId);
 };
 
+/** Mark a buzz as delivered (receiver opened IncomingBuzzScreen).
+ *  Idempotent: only writes if delivered_at is still null. */
+export const markBuzzDelivered = async (buzzId: string) => {
+  try {
+    await supabase.from('buzzes').update({delivered_at: Date.now()}).eq('id', buzzId).is('delivered_at', null);
+  } catch {}
+};
+
+/** Mark a buzz as notified (receiver's device showed the notification).
+ *  Called from JS paths (iOS, notifee fallback). Native Android uses its own markNotifiedAt. */
+export const markBuzzNotified = async (buzzId: string) => {
+  try {
+    await supabase.from('buzzes').update({notified_at: Date.now()}).eq('id', buzzId).is('notified_at', null);
+  } catch {}
+};
+
 export const addUser = async (user: Omit<User, 'id'>) => {
   const {data, error} = await supabase.from('users').insert(user).select().single();
   if (error) throw error;
