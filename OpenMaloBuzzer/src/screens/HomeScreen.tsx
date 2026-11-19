@@ -19,12 +19,26 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import Sound from 'react-native-sound';
 import {User, Group, Buzz, VoiceMail} from '../types';
+import {PRESENCE_TIMEOUT_MS} from '../constants';
 import {useUsers} from '../hooks/useUsers';
 import {useGroups} from '../hooks/useGroups';
 import {useReasons} from '../hooks/useReasons';
 import {subscribeToVoiceMails, subscribeToMissedBuzzes, markVoiceMailListened, deleteVoiceMail, subscribeToUsers, getFavorites, upsertFavorite, deleteFavorite} from '../services/firebase';
 import {supabase} from '../services/supabase';
 import {BUZZ_SOUNDS} from '../services/soundPreference';
+
+const formatLastSeen = (lastSeenAt: number): string => {
+  const diff = Date.now() - lastSeenAt;
+  if (diff < PRESENCE_TIMEOUT_MS) return 'Online';
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return '1 day offline';
+  return `${days} days offline`;
+};
 
 const getLogViewedKey = (userId: string) => `@buzzer_log_viewed_${userId}`;
 
@@ -41,6 +55,7 @@ interface Props {
   onEditBuzz: (user: User, reason: string) => void;
   onCallUser: (user: User) => void;
   onVoiceMail: (user?: User) => void;
+  onViewUserProfile: (user: User) => void;
   onSettings: () => void;
   onProfile: () => void;
   onHistory: () => void;
@@ -50,7 +65,7 @@ interface Props {
   initialTab?: 'recent' | 'people' | 'groups' | 'voice';
 }
 
-const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, onEditBuzz, onCallUser, onVoiceMail, onSettings, onProfile, onHistory, onGroups, onBuzzGroup, onEditGroup, initialTab}) => {
+const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, onEditBuzz, onCallUser, onVoiceMail, onViewUserProfile, onSettings, onProfile, onHistory, onGroups, onBuzzGroup, onEditGroup, initialTab}) => {
   const {users, isOnline, loading} = useUsers(currentUser.id, currentUser.tenant_id);
   const {groups} = useGroups(currentUser.tenant_id);
   const reasons = useReasons(currentUser.tenant_id);
@@ -348,17 +363,20 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
 
   const renderUser = ({item}: {item: User}) => {
     const online = isOnline(item);
+    const lastSeenText = formatLastSeen(item.last_seen_at);
+    const isOfflineLong = !online && (Date.now() - item.last_seen_at) >= 86400000; // 1 day+
     return (
       <View style={styles.userRow}>
-        <TouchableOpacity style={styles.userLeft} onPress={() => onSelectUser(item)} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.avatarTap} onPress={() => onViewUserProfile(item)} activeOpacity={0.7}>
           <View style={[styles.avatar, online && styles.avatarOnline]}>
             <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
             <View style={[styles.dot, online ? styles.dotOn : styles.dotOff]} />
           </View>
-          <View style={styles.userInfo}>
-            <Text style={styles.userName}>{item.name}</Text>
-            <Text style={styles.userRole}>{item.role}</Text>
-          </View>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.userInfo} onPress={() => onViewUserProfile(item)} activeOpacity={0.7}>
+          <Text style={styles.userName}>{item.name}</Text>
+          <Text style={styles.userRole}>{item.role}</Text>
+          <Text style={[styles.lastSeenText, online ? styles.lastSeenOnline : isOfflineLong ? styles.lastSeenDanger : styles.lastSeenWarn]}>{lastSeenText}</Text>
         </TouchableOpacity>
         <View style={styles.userActions}>
           <TouchableOpacity style={styles.callBtn} onPress={() => onCallUser(item)}>
@@ -457,6 +475,8 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
             const targetUser = users.find(u => u.id === fav.userId);
             const name = targetUser?.name || usersMap[fav.userId] || '?';
             const online = targetUser ? isOnline(targetUser) : false;
+            const favLastSeen = targetUser ? formatLastSeen(targetUser.last_seen_at) : '';
+            const favOfflineLong = targetUser ? !online && (Date.now() - targetUser.last_seen_at) >= 86400000 : false;
             return (
               <View key={fav.userId} style={styles.recentCard}>
                 <View style={styles.recentCardHeader}>
@@ -464,7 +484,10 @@ const HomeScreen: React.FC<Props> = ({currentUser, onSelectUser, onBuzzAgain, on
                     <Text style={styles.recentAvatarText}>{name.charAt(0).toUpperCase()}</Text>
                     <View style={[styles.dot, online ? styles.dotOn : styles.dotOff]} />
                   </View>
-                  <Text style={styles.recentCardName}>{name}</Text>
+                  <View style={styles.recentNameWrap}>
+                    <Text style={styles.recentCardName}>{name}</Text>
+                    {targetUser && <Text style={[styles.favLastSeen, online ? styles.lastSeenOnline : favOfflineLong ? styles.lastSeenDanger : styles.lastSeenWarn]}>{favLastSeen}</Text>}
+                  </View>
                   {targetUser && (
                     <TouchableOpacity style={styles.recentCallBtn} onPress={() => onCallUser(targetUser)}>
                       <Icon name="call" size={18} color="#4CAF50" />
@@ -879,7 +902,9 @@ const styles = StyleSheet.create({
 
   recentCard: {backgroundColor: '#1A1A1A', borderRadius: 14, marginBottom: 10, padding: 14, borderWidth: 1, borderColor: '#252525'},
   recentCardHeader: {flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4},
-  recentCardName: {color: '#fff', fontSize: 16, fontWeight: '700', flex: 1},
+  recentNameWrap: {flex: 1},
+  recentCardName: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  favLastSeen: {fontSize: 11, fontWeight: '600', marginTop: 1},
   recentCallBtn: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#1a3a1a', alignItems: 'center', justifyContent: 'center'},
   recentIconBtn: {width: 34, height: 34, borderRadius: 17, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center'},
   recentReasonRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 4, borderTopWidth: 1, borderTopColor: '#252525'},
@@ -900,7 +925,7 @@ const styles = StyleSheet.create({
 
   // People
   userRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10},
-  userLeft: {flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1},
+  avatarTap: {marginRight: 12},
   avatar: {width: 44, height: 44, borderRadius: 22, backgroundColor: '#252525', alignItems: 'center', justifyContent: 'center', position: 'relative'},
   avatarOnline: {backgroundColor: '#1a3a1a'},
   avatarText: {color: '#fff', fontSize: 18, fontWeight: '700'},
@@ -910,6 +935,10 @@ const styles = StyleSheet.create({
   userInfo: {flex: 1},
   userName: {color: '#fff', fontSize: 16, fontWeight: '600'},
   userRole: {color: '#999', fontSize: 13, marginTop: 1, textTransform: 'capitalize'},
+  lastSeenText: {fontSize: 11, fontWeight: '600', marginTop: 2},
+  lastSeenOnline: {color: '#4CAF50'},
+  lastSeenWarn: {color: '#FF9800'},
+  lastSeenDanger: {color: '#F44336'},
   userActions: {flexDirection: 'row', gap: 6, alignItems: 'center'},
   callBtn: {width: 36, height: 36, borderRadius: 18, backgroundColor: '#1a3a1a', alignItems: 'center', justifyContent: 'center'},
   vmBtn: {width: 36, height: 36, borderRadius: 18, backgroundColor: '#2a1515', alignItems: 'center', justifyContent: 'center'},

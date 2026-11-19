@@ -13,6 +13,7 @@ type DisplayItem =
 interface Props {
   currentUser: User;
   onBack: () => void;
+  onViewUserProfile: (user: User) => void;
 }
 
 const RESPONSE_MAP: Record<string, {label: string; color: string; icon: string}> = {
@@ -63,10 +64,11 @@ const groupBuzzes = (buzzes: Buzz[], groupsMap: Record<string, string>): Display
   return items;
 };
 
-const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
+const HistoryScreen: React.FC<Props> = ({currentUser, onBack, onViewUserProfile}) => {
   const insets = useSafeAreaInsets();
   const [buzzes, setBuzzes] = useState<Buzz[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, string>>({});
+  const [fullUsersMap, setFullUsersMap] = useState<Record<string, User>>({});
   const {groups} = useGroups(currentUser.tenant_id);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -100,8 +102,10 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
         lastDocRef.current = page.lastDoc;
         setHasMore(page.hasMore);
         const map: Record<string, string> = {};
-        userList.forEach(u => { map[u.id] = u.name; });
+        const fMap: Record<string, User> = {};
+        userList.forEach(u => { map[u.id] = u.name; fMap[u.id] = u; });
         setUsersMap(map);
+        setFullUsersMap(fMap);
       } catch (err) {
         console.warn('Failed to load buzz log:', err);
       }
@@ -284,6 +288,14 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
     );
   };
 
+  const handleTapItem = (item: DisplayItem) => {
+    // Navigate to the other user's profile
+    const buzz = item.type === 'group' ? item.buzzes[0] : item.buzz;
+    const otherUserId = buzz.from_user_id === currentUser.id ? buzz.to_user_id : buzz.from_user_id;
+    const targetUser = fullUsersMap[otherUserId];
+    if (targetUser) onViewUserProfile(targetUser);
+  };
+
   const renderItem = ({item}: {item: DisplayItem}) => {
     const content = item.type === 'group'
       ? renderGroupBuzz(item.buzzes, item.groupName)
@@ -291,6 +303,7 @@ const HistoryScreen: React.FC<Props> = ({currentUser, onBack}) => {
     return (
       <TouchableOpacity
         activeOpacity={0.8}
+        onPress={() => handleTapItem(item)}
         onLongPress={() => handleDeleteItem(item)}
         delayLongPress={600}
       >

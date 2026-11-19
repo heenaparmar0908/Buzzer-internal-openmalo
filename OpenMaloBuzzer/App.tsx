@@ -24,6 +24,7 @@ import HistoryScreen from './src/screens/HistoryScreen';
 import GroupsScreen from './src/screens/GroupsScreen';
 import GroupBuzzSheet from './src/screens/GroupBuzzSheet';
 import VoiceMailScreen from './src/screens/VoiceMailScreen';
+import UserProfileScreen from './src/screens/UserProfileScreen';
 
 const {BuzzerService, BuzzerAlarmModule} = NativeModules;
 
@@ -34,7 +35,7 @@ const toEpochMs = (v: any): number => {
   return 0;
 };
 
-type Screen = 'home' | 'buzz' | 'settings' | 'profile' | 'history' | 'groups' | 'group-buzz' | 'voice-mail';
+type Screen = 'home' | 'buzz' | 'settings' | 'profile' | 'history' | 'groups' | 'group-buzz' | 'voice-mail' | 'user-profile';
 
 function App() {
   const {user, loading, login, signUp, deleteAccount, updateProfile, changePin, logout} = useAuth();
@@ -545,6 +546,7 @@ function App() {
   const handleBuzzGroup = useCallback((g: Group) => { setSelectedGroup(g); setScreen('group-buzz'); }, []);
   const handleEditGroup = useCallback((g: Group) => { setEditGroup(g); setScreen('groups'); }, []);
   const handleCloseGroup = useCallback(() => { setSelectedGroup(null); setHomeTab('groups'); setScreen('home'); }, []);
+  const handleViewUserProfile = useCallback((u: User) => { setSelectedUser(u); setScreen('user-profile'); }, []);
 
   return (
     <SafeAreaProvider>
@@ -571,6 +573,7 @@ function App() {
               onEditBuzz={handleEditBuzz}
               onCallUser={handleCallUser}
               onVoiceMail={handleVoiceMail}
+              onViewUserProfile={handleViewUserProfile}
               onSettings={() => setScreen('settings')}
               onProfile={() => setScreen('profile')}
               onHistory={() => setScreen('history')}
@@ -586,7 +589,8 @@ function App() {
           {screen === 'voice-mail' && <VoiceMailScreen currentUser={user} targetUser={selectedUser || undefined} onBack={() => { setSelectedUser(null); setScreen('home'); }} />}
           {screen === 'settings' && <SettingsScreen currentUser={user} onBack={() => setScreen('home')} />}
           {screen === 'profile' && <ProfileScreen currentUser={user} onBack={() => setScreen('home')} onLogout={handleLogout} onDeleteAccount={handleDeleteAccount} onUpdateProfile={updateProfile} onChangePin={changePin} />}
-          {screen === 'history' && <HistoryScreen currentUser={user} onBack={() => setScreen('home')} />}
+          {screen === 'history' && <HistoryScreen currentUser={user} onBack={() => setScreen('home')} onViewUserProfile={handleViewUserProfile} />}
+          {screen === 'user-profile' && selectedUser && <UserProfileScreen user={selectedUser} onBack={() => { setSelectedUser(null); setScreen('home'); }} onBuzz={handleSelectUser} onCall={handleCallUser} onVoiceMail={handleVoiceMail} />}
 
           {/* Incoming buzz overlay — renders on TOP of any screen without unmounting it */}
           {incomingPayload && <IncomingBuzzScreen key={incomingPayload.buzz_id} payload={incomingPayload} onDismiss={handleDismissIncoming} />}
