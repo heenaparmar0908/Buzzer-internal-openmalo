@@ -221,6 +221,10 @@ class BuzzerAlarmModule: NSObject, AVAudioPlayerDelegate {
   @objc
   func setUserId(_ userId: String) {
     UserDefaults.standard.set(userId, forKey: "buzzer_active_user_id")
+    // Retry saving voip_token now that userId is available.
+    // On first launch, PushKit delivers the token before login,
+    // so saveVoIPTokenToSupabase fails (no userId). This retries.
+    BuzzerCallManager.shared.retrySaveVoIPToken()
   }
 
   @objc

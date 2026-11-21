@@ -65,13 +65,17 @@ export const sendBuzzPush = async (
       tokenData = td;
     }
     const fcmToken = tokenData?.fcm_token;
-    if (!fcmToken) { trackPush(buzzId, 'no_token', 0); return 'no_token'; }
+    const voipToken = tokenData?.voip_token || null;
+    // Only bail if BOTH tokens are missing. VoIP push can deliver
+    // even when FCM token is null (e.g., APNs registration failed
+    // but PushKit succeeded — common on first launch).
+    if (!fcmToken && !voipToken) { trackPush(buzzId, 'no_token', 0); return 'no_token'; }
 
     // If token was marked stale but has been refreshed since (user opened app),
     // clear the stale flag and attempt delivery. Without this, a user who
     // refreshed their token would still be unreachable until someone else
     // successfully pushes to them first.
-    if (tokenData?.fcm_token_stale) {
+    if (fcmToken && tokenData?.fcm_token_stale) {
       const updatedAt = tokenData?.token_updated_at || 0;
       const staleAge = Date.now() - updatedAt;
       // Token was refreshed in the last 7 days — the stale flag is outdated
@@ -79,8 +83,10 @@ export const sendBuzzPush = async (
         console.log(`[Push] Token was stale but refreshed ${Math.round(staleAge / 60000)}m ago — clearing stale flag`);
         await supabase.from('user_tokens').update({fcm_token_stale: false}).eq('user_id', toUserId);
       } else {
-        trackPush(buzzId, 'token_invalid', 0);
-        return 'token_invalid';
+        // Token stale for >7 days — still attempt delivery. The token may
+        // have been refreshed by a background task without clearing the flag.
+        // If FCM returns UNREGISTERED, we'll re-mark it stale below.
+        console.log(`[Push] Token stale for ${Math.round(staleAge / 86400000)}d — attempting delivery anyway`);
       }
     }
 
@@ -94,43 +100,42 @@ export const sendBuzzPush = async (
       sound_id: soundId,
     };
 
-    // Attempt 1 (includes voip_token for iOS CallKit delivery)
-    const voipToken = tokenData?.voip_token || null;
-    let res = await callSendNotification(fcmToken, tokenData?.platform || null, payload, voipToken);
-    let attempt = 1;
+    // Retry up to 5 times with increasing delays (1s, 2s, 3s, 4s).
+    // Intermittent failures (edge function cold start, network hiccup)
+    // are resolved by retrying. Permanent errors (UNREGISTERED) stop immediately.
+    const MAX_ATTEMPTS = 5;
+    let attempt = 0;
+    let lastRes: Response | null = null;
 
-    // Parse response
-    let body: any = {};
-    try { body = await res.json(); } catch {}
-
-    if (isTokenInvalid(body)) {
-      await supabase.from('user_tokens').update({fcm_token_stale: true}).eq('user_id', toUserId);
-      trackPush(buzzId, 'token_invalid', attempt);
-      return 'token_invalid';
-    }
-
-    // Retry once on transient failure (500, network error, timeout).
-    // FCM notification messages are idempotent — retrying is safe.
-    // Permanent errors (UNREGISTERED, INVALID_ARGUMENT) are NOT retried.
-    if (!res.ok) {
-      console.log(`[Push] Attempt 1 failed (HTTP ${res.status}) — retrying in 2s`);
-      await new Promise<void>(r => setTimeout(r, 2000));
+    while (attempt < MAX_ATTEMPTS) {
+      attempt++;
+      if (attempt > 1) {
+        await new Promise<void>(r => setTimeout(r, (attempt - 1) * 1000));
+      }
       try {
-        res = await callSendNotification(fcmToken, tokenData?.platform || null, payload, voipToken);
-        attempt = 2;
-        body = {};
-        try { body = await res.json(); } catch {}
-        if (isTokenInvalid(body)) {
+        lastRes = await callSendNotification(fcmToken || '', tokenData?.platform || null, payload, voipToken);
+        let body: any = {};
+        try { body = await lastRes.json(); } catch {}
+
+        if (fcmToken && isTokenInvalid(body)) {
           await supabase.from('user_tokens').update({fcm_token_stale: true}).eq('user_id', toUserId);
           trackPush(buzzId, 'token_invalid', attempt);
           return 'token_invalid';
         }
-      } catch {}
+
+        if (lastRes.ok) {
+          trackPush(buzzId, 'delivered', attempt);
+          return 'delivered';
+        }
+
+        console.log(`[Push] Attempt ${attempt}/${MAX_ATTEMPTS} failed (HTTP ${lastRes.status})`);
+      } catch (e: any) {
+        console.log(`[Push] Attempt ${attempt}/${MAX_ATTEMPTS} error: ${e?.message}`);
+      }
     }
 
-    const result: PushResult = res.ok ? 'delivered' : 'failed';
-    trackPush(buzzId, result, attempt);
-    return result;
+    trackPush(buzzId, 'failed', attempt);
+    return 'failed';
   } catch (e: any) {
     console.warn('sendBuzzPush failed:', e?.message || e);
     trackPush(buzzId, 'failed', 0);

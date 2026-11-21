@@ -125,10 +125,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Write refreshed token to Supabase so push delivery uses the new token.
         // Without this, the server holds a stale token after rotation.
         saveTokenToSupabase(token: token) { success in
+          // Also retry saving VoIP token — it may have failed on first login
+          // (network error) and there's no other periodic retry mechanism.
+          BuzzerCallManager.shared.retrySaveVoIPToken()
           task.setTaskCompleted(success: success)
         }
       } else {
         print("[BGTask] FCM token refresh failed: \(error?.localizedDescription ?? "unknown")")
+        // Still try VoIP token even if FCM failed
+        BuzzerCallManager.shared.retrySaveVoIPToken()
         task.setTaskCompleted(success: false)
       }
     }

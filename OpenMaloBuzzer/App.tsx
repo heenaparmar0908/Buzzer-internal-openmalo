@@ -133,6 +133,12 @@ function App() {
       (buzz) => {
         console.log(`[T6-RT] Supabase Realtime received buzz ${buzz.id} at ${Date.now()}`);
         if (AppState.currentState === 'active') {
+          // iOS: CallKit handles buzz response (Accept=Ack, Decline=Busy)
+          // so don't show IncomingBuzzScreen — it would conflict with CallKit.
+          if (Platform.OS === 'ios') {
+            console.log('[Buzz-RT] iOS — skipping IncomingBuzzScreen (CallKit handles it)');
+            return;
+          }
           const name = buzz.from_user_name || usersMapRef.current[buzz.from_user_id] || 'User';
           setIncomingPayload(prev => {
             if (prev?.buzz_id === buzz.id) return prev;
@@ -177,8 +183,11 @@ function App() {
   // directly every 5s to catch incoming buzzes. This ensures IncomingBuzzScreen
   // shows even when push/websocket are down (the native BuzzerService poll
   // only shows a notification, not the full-screen UI).
+  // iOS: Skip polling — CallKit handles live buzzes via VoIP push,
+  // and the safety-net checkPending catches missed buzzes on app open.
+  // Polling in foreground would conflict with CallKit (double UI).
   useEffect(() => {
-    if (!user) return;
+    if (!user || Platform.OS === 'ios') return;
     const poll = setInterval(async () => {
       if (AppState.currentState !== 'active') return;
       // Skip if we're already showing a buzz
@@ -227,20 +236,23 @@ function App() {
         // messages that arrived during the brief cold-start window.
         if (data.type === 'buzz' && data.buzz_id) {
           console.log(`[T6] FCM onMessage received buzz ${data.buzz_id} at ${Date.now()}`);
-          // Show IncomingBuzzScreen immediately from FCM data — don't wait
-          // for Supabase Realtime which may have variable latency.
-          setIncomingPayload(prev => {
-            if (prev?.buzz_id === data.buzz_id) return prev;
-            return {
-              buzz_id: data.buzz_id,
-              from_user_id: data.from_user_id || '',
-              from_user_name: data.from_user_name || 'User',
-              reason: data.reason || '',
-              note: data.note && data.note !== 'null' ? data.note : null,
-              sound_id: data.sound_id || null,
-              created_at: Date.now(), // Live push — always fresh
-            };
-          });
+          // iOS: CallKit handles all buzz UI — don't show IncomingBuzzScreen.
+          // FCM only fires on iOS when VoIP push failed, but CallKit may still
+          // have shown via a retry. Avoid conflicting screens.
+          if (Platform.OS !== 'ios') {
+            setIncomingPayload(prev => {
+              if (prev?.buzz_id === data.buzz_id) return prev;
+              return {
+                buzz_id: data.buzz_id,
+                from_user_id: data.from_user_id || '',
+                from_user_name: data.from_user_name || 'User',
+                reason: data.reason || '',
+                note: data.note && data.note !== 'null' ? data.note : null,
+                sound_id: data.sound_id || null,
+                created_at: Date.now(),
+              };
+            });
+          }
           // Start native alarm immediately on Android
           if (Platform.OS === 'android') {
             BuzzerService?.showBuzz?.(
@@ -283,6 +295,8 @@ function App() {
           return;
         }
         if (data.buzz_id) {
+          // iOS: CallKit handles all buzz UI — skip IncomingBuzzScreen
+          if (Platform.OS === 'ios') return;
           // Check if buzz was already cancelled/responded
           try {
             const {data: buzzRow} = await supabase.from('buzzes').select('response')
@@ -318,7 +332,7 @@ function App() {
         BuzzerService?.stopAlarm?.();
         setIncomingPayload(prev => prev?.buzz_id === buzzId ? null : prev);
       },
-      payload => { setIncomingPayload(prev => prev?.buzz_id === payload.buzz_id ? prev : payload); },
+      payload => { if (Platform.OS !== 'ios') setIncomingPayload(prev => prev?.buzz_id === payload.buzz_id ? prev : payload); },
       () => { setSelectedUser(null); setScreen('voice-mail'); },
     );
     return unsubscribe;
@@ -350,6 +364,11 @@ function App() {
         const data = await BuzzerService?.getPendingBuzz?.();
         if (data?.buzz_id) {
           console.log(`[Buzz-CheckPending] Native pending buzz: ${data.buzz_id}`);
+          // iOS: CallKit handles all buzz UI — skip IncomingBuzzScreen
+          if (Platform.OS === 'ios') {
+            setPendingChecked(true);
+            return;
+          }
           const immediateName = data.from_user_name && data.from_user_name !== 'Someone'
             ? data.from_user_name : 'User';
           setIncomingPayload(prev => {
@@ -393,6 +412,8 @@ function App() {
             }
             if (nData.buzz_id) {
               console.log(`[Buzz-CheckPending] FCM initial notification: ${nData.buzz_id}`);
+              // iOS: CallKit handles all buzz UI — skip IncomingBuzzScreen
+              if (Platform.OS === 'ios') { setPendingChecked(true); return; }
               setIncomingPayload(prev => {
                 if (prev?.buzz_id === nData.buzz_id) return prev;
                 return {
@@ -424,6 +445,8 @@ function App() {
             }
             if (nData.buzz_id) {
               console.log(`[Buzz-CheckPending] Notifee initial notification: ${nData.buzz_id}`);
+              // iOS: CallKit handles all buzz UI — skip IncomingBuzzScreen
+              if (Platform.OS === 'ios') { setPendingChecked(true); return; }
               setIncomingPayload(prev => {
                 if (prev?.buzz_id === nData.buzz_id) return prev;
                 return {
@@ -451,6 +474,8 @@ function App() {
             const parsed = JSON.parse(tapData);
             if (parsed.buzz_id) {
               console.log(`[Buzz-CheckPending] AsyncStorage pending tap: ${parsed.buzz_id}`);
+              // iOS: CallKit handles all buzz UI — skip IncomingBuzzScreen
+              if (Platform.OS === 'ios') { setPendingChecked(true); return; }
               setIncomingPayload(prev => {
                 if (prev?.buzz_id === parsed.buzz_id) return prev;
                 return parsed;
@@ -464,9 +489,8 @@ function App() {
         // Safety net: check Supabase for any missed unanswered buzzes.
         // This catches buzzes sent while the app was inactive and the
         // FCM token was stale (e.g., iOS app not opened for days).
-        // No time limit — any unanswered buzz is shown. The receiver
-        // sees "Sent X ago" for stale ones and gets a gentle vibrate
-        // instead of a loud alarm. Never silently drop a buzz.
+        // On iOS, CallKit handles live buzzes, but if VoIP+FCM both
+        // failed, this safety net catches the missed buzz on app open.
         try {
           const {data: missed} = await supabase.from('buzzes').select('*')
             .eq('to_user_id', userRef.current?.id || '').in('response', ['none', 'auto_dismissed'])
@@ -489,6 +513,8 @@ function App() {
               };
             }).filter((p: BuzzPayload) => !!p.buzz_id);
             if (payloads.length > 0) {
+              // iOS: CallKit handles all buzz UI — skip IncomingBuzzScreen
+              if (Platform.OS === 'ios') { setPendingChecked(true); return; }
               const first = payloads[0];
               // Queue remaining buzzes (skip first, it's shown immediately)
               pendingBuzzQueueRef.current = payloads.slice(1);

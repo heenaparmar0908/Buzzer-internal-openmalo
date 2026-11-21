@@ -1,0 +1,18 @@
+{
+  "aps": {
+    "alert": {
+      "title": "Buzz from Pradip Parmar",
+      "body": "Come here"
+    },
+    "sound": "buzz_alarm.wav",
+    "interruption-level": "time-sensitive",
+    "category": "buzz_actions"
+  },
+  "type": "buzz",
+  "buzz_id": "test-simulator-001",
+  "from_user_id": "756787a2-38d5-4dbd-afae-79d947603514",
+  "from_user_name": "Pradip Parmar",
+  "reason": "Come here",
+  "note": "",
+  "sound_id": "buzz_alarm"
+}

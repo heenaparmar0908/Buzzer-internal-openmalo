@@ -1,0 +1,21 @@
+{
+  "name": "buzzer-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for OpenMalo Buzzer — send buzzes, list users, check responses",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "buzzer-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@supabase/supabase-js": "^2.49.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

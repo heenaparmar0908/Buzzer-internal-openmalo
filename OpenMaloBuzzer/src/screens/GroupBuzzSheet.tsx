@@ -131,7 +131,7 @@ const GroupBuzzSheet: React.FC<Props> = ({sender, group, onClose}) => {
         <ScrollView style={styles.responseList} contentContainerStyle={{paddingBottom: 16}}>
           {memberIds.map(id => {
             const response = responses[id] || 'none';
-            const config = RESPONSE_CONFIG[response];
+            const config = RESPONSE_CONFIG[response] || RESPONSE_CONFIG.ack;
             const name = usersMap[id] || '?';
             return (
               <View key={id} style={styles.memberRow}>

@@ -81,18 +81,24 @@ describe('sendBuzzPush', () => {
     expect(result).toBe('no_token');
   });
 
-  it('returns token_invalid when fcm_token_stale is true', async () => {
+  it('still attempts delivery when fcm_token_stale is true (clears flag if recent, tries anyway if old)', async () => {
     withToken('tok-stale', true);
+    // Source no longer bails on stale flag — it checks token_updated_at and attempts delivery.
+    // withToken doesn't set token_updated_at so updatedAt=0 → logs and attempts anyway.
+    // fetchMock default returns {ok: true} → 'delivered'.
     const result = await sendBuzzPush('r-1', 'b-1', 's-1', 'A', 'Test', null);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(result).toBe('token_invalid');
+    expect(fetchMock).toHaveBeenCalled();
+    expect(result).toBe('delivered');
   });
 
   it('returns failed on network failure', async () => {
     withToken('tok-123');
-    fetchMock.mockRejectedValueOnce(new Error('Network error'));
+    // Source retries up to 5 times with delays (1+2+3+4=10s) — need long timeout
+    fetchMock.mockRejectedValue(new Error('Network error'));
     await expect(sendBuzzPush('r-1', 'b-1', 's-1', 'A', 'Test', null)).resolves.toBe('failed');
-  });
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(() => Promise.resolve({ok: true, json: () => Promise.resolve({})} as Response));
+  }, 30000);
 });
 
 describe('sendBuzzCancelledPush', () => {

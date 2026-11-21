@@ -20,7 +20,7 @@ jest.mock('../src/services/supabase', () => {
     fromImpl: (_table: string): any => _state._defaultChainable(),
     _defaultChainable: () => {
       const obj: any = {};
-      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','gte','limit','order','range']) {
+      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','or','is','contains','gte','limit','order','range']) {
         obj[m] = jest.fn().mockReturnValue(obj);
       }
       obj.single = jest.fn(() => Promise.resolve({data: null, error: null}));
@@ -153,7 +153,8 @@ describe('Foreground — normal buzz flow', () => {
       if (table === 'buzzes') {
         const c = _state._defaultChainable();
         c.update = jest.fn((data: any) => { updateData = data; return c; });
-        c.eq = jest.fn(() => Promise.resolve({error: null}));
+        // .eq() must return chainable so source can chain .in() after it
+        c.eq = jest.fn(() => c);
         return c;
       }
       return _state._defaultChainable();
@@ -261,17 +262,16 @@ describe('Background — FCM background handler', () => {
     jest.replaceProperty(require('react-native').Platform, 'OS', 'ios');
   });
 
-  it('shows notifee fallback with sound on dedicated fallback channel', async () => {
+  it('shows notifee fallback on dedicated fallback channel', async () => {
     await bgHandler!({data: {
       type: 'buzz', buzz_id: 'bg-1', from_user_id: 's1',
       from_user_name: 'Heena', reason: 'Come in cabin', note: '',
     }});
 
     const notifee = require('@notifee/react-native').default;
-    // Fallback channel should be created
+    // Fallback channel should be created (silent — BuzzerService handles alarm)
     expect(notifee.createChannel).toHaveBeenCalledWith(expect.objectContaining({
       id: expect.stringMatching(/^buzzer_fallback/),
-      sound: 'buzz_alarm',
       vibration: true,
     }));
     // Notification posted on fallback channel, NOT native buzzer_alerts
@@ -280,7 +280,6 @@ describe('Background — FCM background handler', () => {
       title: 'Buzz from Heena',
       android: expect.objectContaining({
         channelId: expect.stringMatching(/^buzzer_fallback/),
-        sound: 'buzz_alarm',
       }),
     }));
   });
@@ -391,7 +390,7 @@ describe('Killed state — recovery and delivery', () => {
     expect(ids[0]).not.toBe(ids[1]);
   });
 
-  it('killed-state buzz shows notification with fallback channel and sound', async () => {
+  it('killed-state buzz shows notification with fallback channel', async () => {
     // In killed state, native BuzzerService.showBuzz returns false
     // Handler falls through to notifee fallback
     await bgHandler!({data: {
@@ -405,9 +404,9 @@ describe('Killed state — recovery and delivery', () => {
       title: 'Buzz from Heena',
       body: 'Come in cabin — Room 4',
     }));
-    // Sound configured on the fallback channel
+    // Fallback channel created (silent — BuzzerService handles alarm)
     expect(notifee.createChannel).toHaveBeenCalledWith(expect.objectContaining({
-      sound: 'buzz_alarm',
+      id: expect.stringMatching(/^buzzer_fallback/),
     }));
   });
 
@@ -444,7 +443,8 @@ describe('Duplicate prevention', () => {
       if (table === 'buzzes') {
         const c = _state._defaultChainable();
         c.update = jest.fn((data: any) => { updateData = data; return c; });
-        c.eq = jest.fn(() => Promise.resolve({error: null}));
+        // .eq() must return chainable so source can chain .in() after it
+        c.eq = jest.fn(() => c);
         return c;
       }
       return _state._defaultChainable();
@@ -605,9 +605,12 @@ describe('Group buzz — all members', () => {
 describe('Network failure handling', () => {
   it('sendBuzzPush returns failed on network error', async () => {
     withToken('tok');
-    fetchMock.mockRejectedValueOnce(new Error('Network error'));
+    // Source retries up to 5 times with delays (1s+2s+3s+4s=10s) — need long timeout
+    fetchMock.mockRejectedValue(new Error('Network error'));
     await expect(sendBuzzPush('r1', 'b1', 's1', 'A', 'Test', null)).resolves.toBe('failed');
-  });
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(() => Promise.resolve({ok: true, json: () => Promise.resolve({})} as Response));
+  }, 30000);
 
   it('respondToBuzz logs warning on Supabase error but does not throw', async () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation();
@@ -615,7 +618,11 @@ describe('Network failure handling', () => {
       if (table === 'buzzes') {
         const c = _state._defaultChainable();
         c.update = jest.fn(() => c);
-        c.eq = jest.fn(() => Promise.resolve({error: {message: 'DB error'}}));
+        c.eq = jest.fn(() => c);
+        // .in() is the terminal call — override its .then to resolve with an error
+        c.in = jest.fn(() => ({
+          then: (cb: any) => Promise.resolve({data: null, error: {message: 'DB error'}}).then(cb),
+        }));
         return c;
       }
       return _state._defaultChainable();

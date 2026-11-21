@@ -9,7 +9,7 @@ jest.mock('../src/services/supabase', () => {
     fromImpl: (_table: string): any => _state._defaultChainable(),
     _defaultChainable: () => {
       const obj: any = {};
-      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','gte','limit','order','range']) {
+      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','or','is','contains','gte','limit','order','range']) {
         obj[m] = jest.fn().mockReturnValue(obj);
       }
       obj.single = jest.fn(() => Promise.resolve({data: null, error: null}));

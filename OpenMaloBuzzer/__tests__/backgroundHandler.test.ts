@@ -96,14 +96,16 @@ describe('background handler — buzz type (Android)', () => {
   });
 });
 
-describe('background handler — voice_message type', () => {
-  it('creates voicemail channel and shows notification', async () => {
+describe('background handler — voice_message type (iOS)', () => {
+  it('shows notification with timeSensitive on iOS (no channel creation)', async () => {
     await bgHandler!({data: {type: 'voice_message', from_user_name: 'Alice', duration: '15'}});
     const notifee = require('@notifee/react-native').default;
-    expect(notifee.createChannel).toHaveBeenCalled();
+    // iOS path skips channel creation (no Android channels on iOS)
+    expect(notifee.createChannel).not.toHaveBeenCalled();
     expect(notifee.displayNotification).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Voice message from Alice',
       body: '15s voice message',
+      ios: expect.objectContaining({sound: 'default', interruptionLevel: 'timeSensitive'}),
     }));
   });
 
@@ -114,12 +116,39 @@ describe('background handler — voice_message type', () => {
   });
 });
 
+describe('background handler — voice_message type (Android)', () => {
+  beforeEach(() => {
+    jest.replaceProperty(require('react-native').Platform, 'OS', 'android');
+  });
+  afterEach(() => {
+    jest.replaceProperty(require('react-native').Platform, 'OS', 'ios');
+  });
+
+  it('creates voicemail channel and shows notification', async () => {
+    await bgHandler!({data: {type: 'voice_message', from_user_name: 'Alice', duration: '15'}});
+    const notifee = require('@notifee/react-native').default;
+    expect(notifee.createChannel).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'buzzer_voicemail',
+      sound: 'default',
+    }));
+    expect(notifee.displayNotification).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Voice message from Alice',
+      body: '15s voice message',
+    }));
+  });
+});
+
 describe('background handler — buzz_cancelled type (iOS)', () => {
-  it('returns early on iOS (APNs collapse-id handles replacement)', async () => {
+  it('cancels buzz notification and shows cancellation notice on iOS', async () => {
+    // The iOS early-return only applies to type==='buzz'. buzz_cancelled is handled
+    // on both platforms — cancelNotification + displayNotification are always called.
     await bgHandler!({data: {type: 'buzz_cancelled', buzz_id: 'bc1', from_user_name: 'Alice'}});
     const notifee = require('@notifee/react-native').default;
-    expect(notifee.cancelNotification).not.toHaveBeenCalled();
-    expect(notifee.displayNotification).not.toHaveBeenCalled();
+    expect(notifee.cancelNotification).toHaveBeenCalledWith('bc1');
+    expect(notifee.displayNotification).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Buzz cancelled',
+      body: 'Alice cancelled the buzz',
+    }));
   });
 });
 

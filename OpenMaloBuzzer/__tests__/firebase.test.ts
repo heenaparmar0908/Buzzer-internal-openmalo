@@ -8,7 +8,7 @@ jest.mock('../src/services/supabase', () => {
     fromImpl: (_table: string): any => _state._defaultChainable(),
     _defaultChainable: () => {
       const obj: any = {};
-      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','gte','limit','order','range']) {
+      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','or','is','contains','gte','limit','order','range']) {
         obj[m] = jest.fn().mockReturnValue(obj);
       }
       obj.single = jest.fn(() => Promise.resolve({data: null, error: null}));
@@ -114,7 +114,8 @@ describe('respondToBuzz', () => {
       if (table === 'buzzes') {
         const c = _state._defaultChainable();
         c.update = jest.fn((data: any) => { updateArgs = data; return c; });
-        c.eq = jest.fn(() => Promise.resolve({error: null}));
+        // .eq() must return chainable (not a Promise) so source can chain .in() after it
+        c.eq = jest.fn(() => c);
         return c;
       }
       return _state._defaultChainable();
@@ -167,7 +168,7 @@ describe('getBuzzLogPage', () => {
       }
       return _state._defaultChainable();
     };
-    const result = await getBuzzLogPage(0);
+    const result = await getBuzzLogPage(0, 'user-1');
     expect(result.hasMore).toBe(true);
     expect(result.lastDoc).toBe(1);
     expect(result.buzzes).toHaveLength(15);

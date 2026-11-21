@@ -1,6 +1,7 @@
 const FIREBASE_PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID")!;
 const FIREBASE_CLIENT_EMAIL = Deno.env.get("FIREBASE_CLIENT_EMAIL")!;
-const FIREBASE_PRIVATE_KEY = Deno.env.get("FIREBASE_PRIVATE_KEY")!.replace(/\\n/g, "\n");
+const _RAW_KEY = Deno.env.get("FIREBASE_PRIVATE_KEY") || "";
+const FIREBASE_PRIVATE_KEY = _RAW_KEY.replace(/\\n/g, "\n");
 
 // APNs auth for VoIP pushes (PushKit/CallKit).
 // These come from your Apple Developer account → Keys → APNs Auth Key (.p8).
@@ -102,13 +103,22 @@ async function getAccessToken(): Promise<string> {
   ).replace(/\s/g, "");
 
   const keyData = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    keyData,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
+  // Diagnostic: log key details to find why it suddenly broke
+  console.log(`[KEY-DIAG] RAW_KEY length=${_RAW_KEY.length}, has-BEGIN=${_RAW_KEY.includes("BEGIN")}, has-backslash-n=${_RAW_KEY.includes("\\n")}, has-real-newline=${_RAW_KEY.includes("\n")}`);
+  console.log(`[KEY-DIAG] AFTER_REPLACE length=${FIREBASE_PRIVATE_KEY.length}, has-BEGIN=${FIREBASE_PRIVATE_KEY.includes("BEGIN")}`);
+  console.log(`[KEY-DIAG] pemBody length=${pemBody.length}, first8=${pemBody.substring(0,8)}, last8=${pemBody.substring(pemBody.length-8)}`);
+  console.log(`[KEY-DIAG] keyData bytes=${keyData.length}`);
+
+  let key: CryptoKey;
+  try {
+    key = await crypto.subtle.importKey(
+      "pkcs8", keyData,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false, ["sign"]
+    );
+  } catch (e) {
+    throw new Error(`Firebase key import failed: ${e}. pemBody=${pemBody.length}chars, keyData=${keyData.length}bytes, first8=${pemBody.substring(0,8)}`);
+  }
 
   const signature = new Uint8Array(
     await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, signInput)
@@ -163,68 +173,66 @@ Deno.serve(async (req) => {
     // Only fall through to FCM if VoIP fails.
     const isBuzz = data?.type === "buzz";
     let voipSent = false;
-    if (voip_token && platform === "ios" && isBuzz && APNS_KEY_ID) {
+    // Use voip_token presence as the signal (not platform column) because
+    // platform may be NULL if the column was missing when the token was saved.
+    if (voip_token && isBuzz && APNS_KEY_ID) {
       try {
         const apnsJwt = await getApnsToken();
-        // Use sandbox for development builds, production for release.
-        // Try production first; if BadDeviceToken, retry on sandbox.
-        const apnsHost = "api.push.apple.com";
-        const apnsSandbox = "api.sandbox.push.apple.com";
-        let voipRes = await fetch(
-          `https://${apnsHost}/3/device/${voip_token}`,
-          {
-            method: "POST",
-            headers: {
-              "apns-topic": `${APNS_BUNDLE_ID}.voip`,
-              "apns-push-type": "voip",
-              "apns-priority": "10",
-              "apns-expiration": "0",
-              "authorization": `bearer ${apnsJwt}`,
-            },
-            body: JSON.stringify({
-              buzz_id: data.buzz_id,
-              from_user_id: data.from_user_id || "",
-              from_user_name: data.from_user_name || "User",
-              reason: data.reason || "Incoming buzz",
-              note: data.note || "",
-              sound_id: data.sound_id || "buzz_alarm",
+        const voipPayload = JSON.stringify({
+          buzz_id: data.buzz_id,
+          from_user_id: data.from_user_id || "",
+          from_user_name: data.from_user_name || "User",
+          reason: data.reason || "Incoming buzz",
+          note: data.note || "",
+          sound_id: data.sound_id || "buzz_alarm",
+        });
+        const apnsHeaders = {
+          "apns-topic": `${APNS_BUNDLE_ID}.voip`,
+          "apns-push-type": "voip",
+          "apns-priority": "10",
+          "apns-expiration": "0",
+          "authorization": `bearer ${apnsJwt}`,
+        };
+
+        // Send to BOTH production and sandbox APNs in parallel.
+        // Debug builds use sandbox tokens, release builds use production.
+        // Instead of trying production first (slow on BadDeviceToken),
+        // fire both and use whichever succeeds.
+        const [prodRes, sandboxRes] = await Promise.allSettled([
+          fetch(`https://api.push.apple.com/3/device/${voip_token}`, {
+            method: "POST", headers: apnsHeaders, body: voipPayload,
+          }),
+          fetch(`https://api.sandbox.push.apple.com/3/device/${voip_token}`, {
+            method: "POST", headers: apnsHeaders, body: voipPayload,
+          }),
+        ]);
+
+        let prodOk = prodRes.status === "fulfilled" && prodRes.value.ok;
+        let sandboxOk = sandboxRes.status === "fulfilled" && sandboxRes.value.ok;
+
+        // Retry once if both failed (transient network/APNs issue)
+        if (!prodOk && !sandboxOk) {
+          console.log("VoIP attempt 1 failed on both — retrying in 1s...");
+          await new Promise(r => setTimeout(r, 1000));
+          const [prodRes2, sandboxRes2] = await Promise.allSettled([
+            fetch(`https://api.push.apple.com/3/device/${voip_token}`, {
+              method: "POST", headers: apnsHeaders, body: voipPayload,
             }),
-          }
-        );
-        // If production returns BadDeviceToken, retry on sandbox (debug builds)
-        if (!voipRes.ok) {
-          const voipBody = await voipRes.text();
-          if (voipBody.includes("BadDeviceToken")) {
-            console.log("Production APNs returned BadDeviceToken — retrying on sandbox");
-            voipRes = await fetch(
-              `https://${apnsSandbox}/3/device/${voip_token}`,
-              {
-                method: "POST",
-                headers: {
-                  "apns-topic": `${APNS_BUNDLE_ID}.voip`,
-                  "apns-push-type": "voip",
-                  "apns-priority": "10",
-                  "apns-expiration": "0",
-                  "authorization": `bearer ${apnsJwt}`,
-                },
-                body: JSON.stringify({
-                  buzz_id: data.buzz_id,
-                  from_user_id: data.from_user_id || "",
-                  from_user_name: data.from_user_name || "User",
-                  reason: data.reason || "Incoming buzz",
-                  note: data.note || "",
-                  sound_id: data.sound_id || "buzz_alarm",
-                }),
-              }
-            );
-          }
+            fetch(`https://api.sandbox.push.apple.com/3/device/${voip_token}`, {
+              method: "POST", headers: apnsHeaders, body: voipPayload,
+            }),
+          ]);
+          prodOk = prodRes2.status === "fulfilled" && prodRes2.value.ok;
+          sandboxOk = sandboxRes2.status === "fulfilled" && sandboxRes2.value.ok;
         }
-        if (voipRes.ok) {
-          console.log("VoIP push sent — skipping FCM to prevent double notification");
+
+        if (prodOk || sandboxOk) {
+          console.log(`VoIP push sent (prod=${prodOk}, sandbox=${sandboxOk}) — skipping FCM`);
           voipSent = true;
         } else {
-          const voipBody2 = await voipRes.text();
-          console.error(`VoIP push failed: HTTP ${voipRes.status} — ${voipBody2} — falling through to FCM`);
+          const prodErr = prodRes.status === "fulfilled" ? `HTTP ${prodRes.value.status}` : prodRes.reason;
+          const sandboxErr = sandboxRes.status === "fulfilled" ? `HTTP ${sandboxRes.value.status}` : sandboxRes.reason;
+          console.error(`VoIP push failed after retry: prod=${prodErr}, sandbox=${sandboxErr} — falling through to FCM`);
         }
       } catch (voipErr) {
         console.error("VoIP push error — falling through to FCM:", voipErr);
@@ -247,11 +255,38 @@ Deno.serve(async (req) => {
     }
 
     const accessToken = await getAccessToken();
+    const fcmUrl = `https://fcm.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/messages:send`;
+    const fcmHeaders = {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    };
+
+    // Android buzz: send data-only HIGH priority FIRST, before notification+data.
+    // When the app has been killed (10+ days inactive), notification+data messages
+    // are displayed by the SYSTEM (no app code runs) → one-time sound only.
+    // A data-only message triggers setBackgroundMessageHandler → BuzzerService
+    // starts with continuous alarm, full-screen intent, and ConnectionService.
+    // The notification+data below acts as a FALLBACK if the OEM drops data-only.
+    // BuzzerService.cancelAllNotificationsForBuzz deduplicates if both arrive.
+    const isIOS = platform === "ios";
+    if (!isIOS && isBuzz && fcm_token) {
+      try {
+        const dataOnlyMsg = { token: fcm_token, data: data || {}, android: { priority: "high" } };
+        const dRes = await fetch(fcmUrl, { method: "POST", headers: fcmHeaders, body: JSON.stringify({ message: dataOnlyMsg }) });
+        if (dRes.ok) {
+          console.log("Android data-only FCM sent → background handler will start alarm");
+        } else {
+          console.log(`Android data-only FCM failed HTTP ${dRes.status} — notification+data fallback follows`);
+        }
+      } catch (e) {
+        console.error("Android data-only FCM error:", e);
+      }
+    }
+
     // If platform is unknown (null/undefined), send a universal message that
     // works on BOTH platforms: notification field (needed for iOS system
     // notification) + android high priority + apns with sound/content-available.
     // This prevents silent failures when the platform column is NULL.
-    const isIOS = platform === "ios";
     const isUnknown = !platform;
 
     // Build alert text
@@ -344,12 +379,7 @@ Deno.serve(async (req) => {
       },
     };
 
-    const fcmUrl = `https://fcm.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/messages:send`;
     const fcmBody = JSON.stringify({ message });
-    const fcmHeaders = {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    };
 
     // Helper to extract FCM-specific error code from v1 response
     const getFcmErrorCode = (body: any): string | undefined =>

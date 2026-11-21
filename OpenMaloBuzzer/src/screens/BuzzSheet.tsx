@@ -282,11 +282,16 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
     console.log(`[T2] Buzz created: ${doc.id} at ${Date.now()} (+${Date.now() - t1}ms)`);
 
     // Send FCM push via Supabase Edge Function (for killed/background state).
-    // Push failures are logged but no alert is shown to the sender —
-    // the buzz is always stored in Supabase and recovered by checkPending.
     sendBuzzPush(targetUser.id, doc.id, sender.id, sender.name, reason, buzzNote, selectedSound)
       .then(pushResult => {
         console.log(`[T4] FCM push result for ${doc.id}: ${pushResult} at ${Date.now()} (+${Date.now() - t1}ms)`);
+        if (pushResult === 'no_token') {
+          Alert.alert('Delivery Warning', `${targetUser.name} has not registered their device. They will see this buzz when they next open the app.`);
+        } else if (pushResult === 'token_invalid') {
+          Alert.alert('Delivery Warning', `${targetUser.name} may not have opened the app recently. They will see this buzz when they next open the app.`);
+        } else if (pushResult === 'failed') {
+          Alert.alert('Delivery Warning', `Push notification failed. ${targetUser.name} will see this buzz when they next open the app.`);
+        }
       })
       .catch(() => {});
 
@@ -438,7 +443,7 @@ const BuzzSheet: React.FC<Props> = ({sender, receiver, onClose, initialReason, a
       <ScrollView style={{flex: 1}} contentContainerStyle={{paddingBottom: 16}}>
         {activeBuzzes.map(buzz => {
           const elapsed = Date.now() - buzz.startTime;
-          const config = RESPONSE_CONFIG[buzz.response];
+          const config = RESPONSE_CONFIG[buzz.response] || RESPONSE_CONFIG.ack;
           const isWaiting = buzz.response === 'none';
           const isTimedOut = isWaiting && elapsed >= NO_RESPONSE_TIMEOUT_MS;
 

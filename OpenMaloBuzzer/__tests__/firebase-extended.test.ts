@@ -13,7 +13,7 @@ jest.mock('../src/services/supabase', () => {
     fromImpl: (_table: string): any => _state._defaultChainable(),
     _defaultChainable: () => {
       const obj: any = {};
-      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','gte','limit','order','range']) {
+      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','or','is','contains','gte','limit','order','range']) {
         obj[m] = jest.fn().mockReturnValue(obj);
       }
       obj.single = jest.fn(() => Promise.resolve({data: null, error: null}));
@@ -278,19 +278,16 @@ describe('markEscalated', () => {
 });
 
 describe('removeUser', () => {
-  it('soft-deletes user by setting is_active to false', async () => {
-    let updateData: any = null;
+  it('deletes user and cleans up related records', async () => {
+    const deletedFromTables: string[] = [];
     _state.fromImpl = (table: string) => {
-      if (table === 'users') {
-        const c = _state._defaultChainable();
-        c.update = jest.fn((data: any) => { updateData = data; return c; });
-        return c;
-      }
-      return _state._defaultChainable();
+      const c = _state._defaultChainable();
+      c.delete = jest.fn(() => { deletedFromTables.push(table); return c; });
+      return c;
     };
     const {removeUser} = require('../src/services/firebase');
     await removeUser('u1');
-    expect(updateData).toEqual({is_active: false});
+    expect(deletedFromTables).toContain('users');
   });
 });
 

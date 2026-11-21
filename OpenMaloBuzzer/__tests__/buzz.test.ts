@@ -20,7 +20,7 @@ jest.mock('../src/services/supabase', () => {
     },
     _defaultChainable: () => {
       const obj: any = {};
-      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','gte','limit','order','range']) {
+      for (const m of ['select','insert','update','upsert','delete','eq','neq','in','or','is','contains','gte','limit','order','range']) {
         obj[m] = jest.fn().mockReturnValue(obj);
       }
       obj.single = jest.fn(() => Promise.resolve({data: null, error: null}));
@@ -87,7 +87,7 @@ const {supabase: mockSupabase, _state} = require('../src/services/supabase');
 /** Builds a chainable query builder resolving to `result`. */
 function chainable(result: () => {data: any; error: any} = () => ({data: null, error: null})) {
   const obj: any = {};
-  for (const m of ['select','update','upsert','delete','eq','neq','in','gte','limit','order','range']) {
+  for (const m of ['select','update','upsert','delete','eq','neq','in','or','is','contains','gte','limit','order','range']) {
     obj[m] = jest.fn().mockReturnValue(obj);
   }
   obj.insert = jest.fn().mockReturnValue(obj);

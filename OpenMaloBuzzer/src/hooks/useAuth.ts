@@ -14,6 +14,17 @@ import {updateLastSeen, updateFcmToken, getFcmToken, flushPendingResponses} from
 
 const refreshFcmToken = async (userId: string) => {
   try {
+    // Always persist userId to native UserDefaults FIRST, even before FCM.
+    // Native modules need this for BGTask token refresh AND VoIP token save.
+    // If this ran inside `if (token)`, a null FCM token would block VoIP
+    // token save and BGTask forever.
+    if (Platform.OS === 'ios') {
+      try {
+        const {NativeModules} = require('react-native');
+        NativeModules.BuzzerAlarmModule?.setUserId?.(userId);
+      } catch {}
+    }
+
     const {getMessaging, requestPermission, getToken} = require('@react-native-firebase/messaging');
     const messaging = getMessaging();
     const permStatus = await requestPermission(messaging);
@@ -22,14 +33,6 @@ const refreshFcmToken = async (userId: string) => {
     console.log('[FCM] Token:', token ? token.substring(0, 20) + '...' : 'NULL');
     if (token) {
       await updateFcmToken(userId, token, Platform.OS);
-      // Persist userId to native UserDefaults so iOS BGTaskScheduler
-      // can write refreshed tokens to Supabase without JS context.
-      if (Platform.OS === 'ios') {
-        try {
-          const {NativeModules} = require('react-native');
-          NativeModules.BuzzerAlarmModule?.setUserId?.(userId);
-        } catch {}
-      }
       console.log('[FCM] Token saved to Supabase for user:', userId);
     } else {
       console.warn('[FCM] No token returned — APNs registration may have failed');
